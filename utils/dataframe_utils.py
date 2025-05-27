@@ -1,5 +1,4 @@
 import streamlit as st
-import warnings
 import pandas as pd
 from pandas.api.types import (
     is_categorical_dtype,
@@ -48,60 +47,9 @@ def custom_dataframe_explorer(df: pd.DataFrame, explorer_id: str, case: bool = T
     for col in df_filtered.columns:
         if is_object_dtype(df_filtered[col]):
             try:
-                # Attempt conversion with format inference and coerce errors to NaT
-                common_formats = [
-                    "%Y-%m-%d %H:%M:%S", "%Y-%m-%d",
-                    "%m/%d/%Y %H:%M:%S", "%m/%d/%Y",
-                    "%d/%m/%Y %H:%M:%S", "%d/%m/%Y",
-                    "%Y%m%d", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d"
-                ]
-                converted_series = None
-                original_series = df_filtered[col]
-
-                # Try to convert with common formats first
-                if original_series.dtype == 'object' and original_series.notna().any():
-                    temp_series = original_series.dropna().astype(str)
-                    # Heuristic: if a small sample looks like numbers, don't try to parse as date
-                    # This avoids trying to parse things like year '2023' or IDs as full dates
-                    if len(temp_series) > 0 and temp_series.iloc[0].isdigit() and len(temp_series.iloc[0]) <= 7 and not any(c in temp_series.iloc[0] for c in ['-', '/']):
-                        pass # Likely not a full date, skip format trials
-                    else:
-                        for fmt in common_formats:
-                            try:
-                                temp_converted = pd.to_datetime(original_series, format=fmt, errors='coerce')
-                                # If a significant portion converts successfully and it's not all NaT
-                                if not temp_converted.isnull().all() and (temp_converted.notna().sum() / original_series.notna().sum() > 0.8):
-                                    converted_series = temp_converted
-                                    break # Found a good format
-                            except (ValueError, TypeError):
-                                continue
-
-                # If no common format worked well, fall back to pandas' inference
-                if converted_series is None:
-                    with warnings.catch_warnings(record=True) as w_list:
-                        warnings.simplefilter("always", UserWarning) # Ensure UserWarnings are captured
-                        
-                        # This is the line that might trigger the specific UserWarning
-                        converted_series = pd.to_datetime(original_series, errors='coerce')
-                        
-                        # Check if the specific warning we care about was triggered for this column
-                        for warning_message in w_list:
-                            if issubclass(warning_message.category, UserWarning) and "Could not infer format" in str(warning_message.message):
-                                print(f"INFO: Column '{col}' triggered 'Could not infer format' warning during fallback. Consider specifying a format if it's a date column.")
-                                break # Found the relevant warning for this column
-                
-                if pd.api.types.is_datetime64_any_dtype(converted_series):
-                    # Heuristic to avoid converting non-date columns that happen to have some date-like strings
-                    # and become mostly NaT after conversion.
-                    # Only apply if the column wasn't already mostly nulls, or if conversion doesn't make it all null.
-                    if not (converted_series.isnull().all() and not df_filtered[col].isnull().all()):
-                        df_filtered[col] = converted_series
-            except ValueError: 
-                # Catch specific errors if infer_datetime_format fails badly or column is not datetime-like
-                pass 
+                df_filtered[col] = pd.to_datetime(df_filtered[col])
             except Exception:
-                # Catch any other unexpected error during conversion
-                pass
+                pass # Ignore columns that cannot be converted
         if is_datetime64_any_dtype(df_filtered[col]):
             try:
                 if df_filtered[col].dt.tz is not None:

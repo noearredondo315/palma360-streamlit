@@ -8,7 +8,7 @@ from utils.download_utils import GestorDescargas, preparar_ruta_destino, Combina
 import tempfile
 import time
 
-MAX_ROWS_TO_DISPLAY = 5000
+MAX_ROWS_TO_DISPLAY = 3500
 
 
 # --- Verificar si los datos están completamente cargados ---
@@ -175,6 +175,16 @@ if not data.empty:
             
         # Mostrar el dataframe concentrado con selección de filas habilitada
         selection_event = st.dataframe(
+            filtered_concentrado,
+            use_container_width=True,
+            column_config=concentrado_config_dict,
+            height=525,
+            # on_select="rerun", # Temporarily commented out for debugging WebSocketClosedError
+            selection_mode="multi-row"
+        )
+        
+        # Mostrar el dataframe concentrado con selección de filas habilitada
+        selection_event = st.dataframe(
             filtered_concentrado.head(MAX_ROWS_TO_DISPLAY),
             use_container_width=True,
             column_config=concentrado_config_dict,
@@ -184,7 +194,7 @@ if not data.empty:
         )
         if len(filtered_concentrado) > MAX_ROWS_TO_DISPLAY:
             st.caption(f"ℹ️ Mostrando las primeras {MAX_ROWS_TO_DISPLAY:,} facturas de {len(filtered_concentrado):,} totales después de aplicar filtros.")
-        
+
         st.info(f"📊 Mostrando {len(filtered_concentrado):,} de {len(df_concentrado_renamed):,} facturas")
 
         # Mover los botones de selección a la barra lateral
