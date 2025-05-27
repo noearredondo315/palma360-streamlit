@@ -8,7 +8,7 @@ from utils.download_utils import GestorDescargas, preparar_ruta_destino, Combina
 import tempfile
 import time
 
-MAX_ROWS_TO_DISPLAY = 10000
+MAX_ROWS_TO_DISPLAY = 5000
 
 
 # --- Verificar si los datos están completamente cargados ---
