@@ -47,9 +47,21 @@ def custom_dataframe_explorer(df: pd.DataFrame, explorer_id: str, case: bool = T
     for col in df_filtered.columns:
         if is_object_dtype(df_filtered[col]):
             try:
-                df_filtered[col] = pd.to_datetime(df_filtered[col])
+                # Attempt conversion with format inference and coerce errors to NaT
+                converted_series = pd.to_datetime(df_filtered[col], infer_datetime_format=True, errors='coerce')
+                
+                if pd.api.types.is_datetime64_any_dtype(converted_series):
+                    # Heuristic to avoid converting non-date columns that happen to have some date-like strings
+                    # and become mostly NaT after conversion.
+                    # Only apply if the column wasn't already mostly nulls, or if conversion doesn't make it all null.
+                    if not (converted_series.isnull().all() and not df_filtered[col].isnull().all()):
+                        df_filtered[col] = converted_series
+            except ValueError: 
+                # Catch specific errors if infer_datetime_format fails badly or column is not datetime-like
+                pass 
             except Exception:
-                pass # Ignore columns that cannot be converted
+                # Catch any other unexpected error during conversion
+                pass
         if is_datetime64_any_dtype(df_filtered[col]):
             try:
                 if df_filtered[col].dt.tz is not None:
