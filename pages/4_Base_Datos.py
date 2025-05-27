@@ -54,6 +54,15 @@ try:
     data = data_loader.get_desglosado_dataframe()
     data_contabilidad = data_loader.get_contabilidad_dataframe()
 
+    if data is not None:
+        st.info(f"Shape of 'data' (desglosado): {data.shape}")
+    else:
+        st.info("'data' (desglosado) is None")
+    if data_contabilidad is not None:
+        st.info(f"Shape of 'data_contabilidad': {data_contabilidad.shape}")
+    else:
+        st.info("'data_contabilidad' is None")
+
     if data is None or data.empty:
         st.warning("No se pudieron obtener los datos. Por favor regresa a la página principal para completar la carga.")
         # Configurar valores por defecto para evitar errores posteriores
@@ -177,7 +186,7 @@ if not data.empty:
             use_container_width=True,
             column_config=concentrado_config_dict,
             height=525,
-            on_select="rerun",
+            # on_select="rerun", # Temporarily commented out for debugging WebSocketClosedError
             selection_mode="multi-row"
         )
         
