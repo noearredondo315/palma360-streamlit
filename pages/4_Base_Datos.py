@@ -8,6 +8,8 @@ from utils.download_utils import GestorDescargas, preparar_ruta_destino, Combina
 import tempfile
 import time
 
+MAX_ROWS_TO_DISPLAY = 10000
+
 
 # --- Verificar si los datos están completamente cargados ---
 if not st.session_state.get("data_fully_loaded", False):
@@ -117,11 +119,13 @@ if not data.empty:
 
         # Mostrar el dataframe filtrado CON configuración de columnas
         st.dataframe(
-            filtered_df,
+            filtered_df.head(MAX_ROWS_TO_DISPLAY),
             use_container_width=True,
             column_config=column_config_dict, # Aplicar la configuración
             height=525  # Aumentar la altura para aprovechar el espacio
         )
+        if len(filtered_df) > MAX_ROWS_TO_DISPLAY:
+            st.caption(f"ℹ️ Mostrando las primeras {MAX_ROWS_TO_DISPLAY:,} filas de {len(filtered_df):,} registros totales después de aplicar filtros.")
 
         # Información sobre el número de filas mostradas con estilo mejorado
         st.info(f"📊 Mostrando {len(filtered_df):,} de {len(display_data_renamed):,} registros según los filtros aplicados")
@@ -171,13 +175,15 @@ if not data.empty:
             
         # Mostrar el dataframe concentrado con selección de filas habilitada
         selection_event = st.dataframe(
-            filtered_concentrado,
+            filtered_concentrado.head(MAX_ROWS_TO_DISPLAY),
             use_container_width=True,
             column_config=concentrado_config_dict,
             height=525,
             # on_select="rerun", # Temporarily commented out for debugging WebSocketClosedError
             selection_mode="multi-row"
         )
+        if len(filtered_concentrado) > MAX_ROWS_TO_DISPLAY:
+            st.caption(f"ℹ️ Mostrando las primeras {MAX_ROWS_TO_DISPLAY:,} facturas de {len(filtered_concentrado):,} totales después de aplicar filtros.")
         
         st.info(f"📊 Mostrando {len(filtered_concentrado):,} de {len(df_concentrado_renamed):,} facturas")
 
