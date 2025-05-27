@@ -17,7 +17,6 @@ from langgraph.graph import StateGraph, END
 # from langgraph.checkpoint.sqlite import SqliteSaver # For persistence if needed later
 from sqlalchemy import create_engine
 import streamlit as st # For st.secrets
-import psycopg2 # Ensure this is installed
 from pydantic import BaseModel, Field # Added for structured output
 from openai import OpenAI # Added for structured output client
 
