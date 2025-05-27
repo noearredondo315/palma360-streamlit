@@ -172,16 +172,6 @@ if not data.empty:
         # Inicializar variables en session state si no existen
         if 'saved_selections' not in st.session_state:
             st.session_state.saved_selections = pd.DataFrame()
-            
-        # Mostrar el dataframe concentrado con selección de filas habilitada
-        selection_event = st.dataframe(
-            filtered_concentrado,
-            use_container_width=True,
-            column_config=concentrado_config_dict,
-            height=525,
-            # on_select="rerun", # Temporarily commented out for debugging WebSocketClosedError
-            selection_mode="multi-row"
-        )
         
         # Mostrar el dataframe concentrado con selección de filas habilitada
         selection_event = st.dataframe(
