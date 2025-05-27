@@ -19,8 +19,4 @@ streamlit_cookies_controller
 PyPDF2
 langchain_community
 langchain_core
-<<<<<<< HEAD
 psycopg2-binary
-=======
-psycopg2-binary
->>>>>>> f6a46b2c2223e4d542686944ca155181a41ade2d
