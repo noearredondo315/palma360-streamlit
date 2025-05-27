@@ -19,3 +19,4 @@ streamlit_cookies_controller
 PyPDF2
 langchain_community
 langchain_core
+psycopg2
