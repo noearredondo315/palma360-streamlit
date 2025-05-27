@@ -45,14 +45,6 @@ try:
     data = data_loader.get_desglosado_dataframe()
     data_contabilidad = data_loader.get_contabilidad_dataframe()
 
-    if data is not None:
-        st.info(f"Shape of 'data' (desglosado): {data.shape}")
-    else:
-        st.info("'data' (desglosado) is None")
-    if data_contabilidad is not None:
-        st.info(f"Shape of 'data_contabilidad': {data_contabilidad.shape}")
-    else:
-        st.info("'data_contabilidad' is None")
 
     if data is None or data.empty:
         st.warning("No se pudieron obtener los datos. Por favor regresa a la página principal para completar la carga.")
