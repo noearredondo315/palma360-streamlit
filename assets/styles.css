@@ -1,0 +1,198 @@
+/* Limpieza total de CSS personalizado para respetar el modo oscuro nativo de Streamlit */
+/* Si necesitas alguna variable de tema, agrégala aquí, pero por ahora no se sobreescribe nada. */
+
+
+/* Contenedores generales */
+.block-container {
+    background-color: var(--background-color) !important;
+    color: var(--text-color) !important;
+}
+
+/* Chatbot container */
+.chat-container, .chatbot-container {
+    background-color: var(--card-background) !important;
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border-color);
+    box-shadow: var(--card-shadow);
+    display: block;
+    overflow: visible !important;
+}
+
+.chat-header {
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.chat-message-user {
+    background-color: var(--primary-color);
+    color: white;
+    border-radius: 15px 15px 0 15px;
+    padding: 10px 15px;
+    margin: 5px 0;
+    max-width: 80%;
+    align-self: flex-end;
+    margin-left: auto;
+}
+
+.chat-message-bot {
+    background-color: var(--highlight-background);
+    color: var(--text-color);
+    border-radius: 15px 15px 15px 0;
+    padding: 10px 15px;
+    margin: 5px 0;
+    max-width: 80%;
+}
+
+/* Data visualization page */
+.data-container {
+    background-color: var(--card-background);
+    border-radius: 8px;
+    padding: 1.5rem;
+    box-shadow: var(--card-shadow);
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border-color);
+}
+
+/* Login form */
+.login-container {
+    max-width: 400px;
+    margin: 100px auto 0;
+    padding: 2rem;
+    background-color: #ffffff;
+    border-radius: 10px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    display: block;
+    overflow: visible !important;
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 2rem;
+    font-size: 2rem;
+    font-weight: bold;
+    color: #333;
+}
+
+/* Estilo para centrar verticalmente el login */
+div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column"] {
+    justify-content: center;
+    align-items: center;
+}
+
+/* Mejora para los campos del formulario */
+div.login-container .stTextInput > div {
+    margin-bottom: 15px;
+}
+
+div.login-container .stButton > button {
+    width: 100%;
+    background-color: #007ADF;
+    color: white;
+    margin-top: 10px;
+}
+
+/* Navigation */
+.sidebar-nav {
+    padding: 1rem 0;
+}
+
+.nav-link {
+    text-decoration: none;
+    color: #333;
+    padding: 0.5rem 1rem;
+    border-radius: 5px;
+    transition: background-color 0.2s ease;
+}
+
+.nav-link:hover {
+    background-color: #f8f9fa;
+}
+
+.nav-link.active {
+    background-color: #e9ecef;
+    font-weight: 600;
+}
+
+/* Custom button styles */
+.custom-button {
+    background-color: #007ADF;
+    color: white;
+    border-radius: 5px;
+    padding: 0.5rem 1rem;
+    font-weight: 500;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+.custom-button:hover {
+    background-color: #0066cc;
+    transform: translateY(-2px);
+}
+
+/* Mejoras para mejorar la apariencia general de Streamlit */
+/* Esto arregla muchos problemas de alineación */
+div.block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}
+
+/* Elimina márgenes innecesarios en las tarjetas */
+div.element-container {
+    margin-bottom: 1rem;
+}
+
+/* Mejora para las pestañas */
+div.stTabs [data-baseweb="tab-list"] {
+    gap: 2px;
+}
+
+div.stTabs [data-baseweb="tab"] {
+    padding: 10px 16px;
+    background-color: var(--card-background);
+    color: var(--text-color) !important;
+}
+
+div.stTabs [data-baseweb="tab"] [role="tab"] {
+    color: var(--text-color) !important;
+}
+
+div.stTabs [aria-selected="true"] {
+    background-color: var(--highlight-background);
+}
+
+/* Mejorar colores de texto en dark mode */
+[data-theme="dark"] .stMarkdown, 
+[data-theme="dark"] .stMarkdown p,
+[data-theme="dark"] h1, 
+[data-theme="dark"] h2, 
+[data-theme="dark"] h3, 
+[data-theme="dark"] label {
+    color: var(--text-color) !important;
+}
+
+/* Asegura que los textos en las métricas sean visibles */
+[data-testid="stMetricLabel"] {
+    color: var(--text-color) !important;
+}
+
+[data-testid="stMetricValue"] {
+    color: var(--text-color) !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .main-container {
+        padding: 1rem;
+    }
+    
+    .metric-card {
+        padding: 1rem;
+    }
+    
+    .login-container {
+        margin: 50px auto 0;
+        padding: 1.5rem;
+    }
+}
