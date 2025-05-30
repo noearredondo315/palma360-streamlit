@@ -9,7 +9,7 @@ from pandas.api.types import (
 )
 from typing import List, Optional, Dict, Any
 
-def custom_dataframe_explorer(df: pd.DataFrame, explorer_id: str, case: bool = True, multiselect_columns: Optional[List[str]] = None) -> pd.DataFrame:
+def custom_dataframe_explorer(df: pd.DataFrame, explorer_id: str, case: bool = True, multiselect_columns: Optional[List[str]] = None, container=None) -> pd.DataFrame:
     """
     Adds a UI on top of a dataframe to let viewers filter columns, with customized
     filtering options for specific text columns. Uses st.session_state to persist filters.
@@ -22,6 +22,8 @@ def custom_dataframe_explorer(df: pd.DataFrame, explorer_id: str, case: bool = T
         multiselect_columns (Optional[List[str]], optional): List of column names that should 
             use st.multiselect for filtering, even if they are text type with high cardinality.
             Defaults to None.
+        container (optional): Container where to place the filter controls. For example, st.sidebar.
+                            If None, uses st (main container). Defaults to None.
 
     Returns:
         pd.DataFrame: Filtered dataframe.
@@ -57,7 +59,10 @@ def custom_dataframe_explorer(df: pd.DataFrame, explorer_id: str, case: bool = T
             except AttributeError: # Handle cases where conversion might fail or Series is empty
                 pass
 
-    modification_container = st.container()
+    # Use provided container or default to st
+    ui = container if container is not None else st
+    
+    modification_container = ui.container()
 
     with modification_container:
         cols_to_filter_state_key = "_columns_to_filter_selection"

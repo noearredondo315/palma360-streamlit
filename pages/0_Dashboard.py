@@ -11,6 +11,8 @@ from utils.authentication import Authentication
 from utils.config import get_config
 from utils.improved_data_loader import get_improved_data_loader, ImprovedDataLoader # Ensure ImprovedDataLoader is importable for type hinting or direct use if needed
 from utils.loading_dialog import loading_data_dialog # Import the refactored dialog
+from supabase import create_client, Client
+from collections import Counter
 
 # Initialize Authentication
 authentication = Authentication()
@@ -40,62 +42,63 @@ if not authentication.check_authentication():
     authentication.login() # This might set st.session_state.trigger_initial_load = True
     st.stop()
 
-# --- Data Loading Functions ---
-data_loader = get_improved_data_loader() # Get the singleton instance
-# Ensure it's initialized if this is the first time it's accessed and needs config
-if not data_loader._initialized_loader_state:
-    supabase_url = get_config("SUPABASE_URL")
-    supabase_key = get_config("SUPABASE_KEY")
-    if supabase_url and supabase_key:
-        ImprovedDataLoader(supabase_url=supabase_url, supabase_key=supabase_key) # Initialize singleton
-        data_loader = get_improved_data_loader() # Get re-initialized instance
-    else:
-        st.error("Configuración de Supabase no encontrada. No se pueden cargar datos.")
-        st.stop()
+# --- Supabase Configuration ---
+supabase_url = st.secrets["supabase"]["url"]
+supabase_key = st.secrets["supabase"]["key"]
+if not supabase_url or not supabase_key:
+    st.error("Configuración de Supabase no encontrada. No se pueden cargar datos.")
+    st.stop()
 
 # progress_callback_for_ui is removed as updates will be handled via queue
 
 def _execute_data_loading():
     """Target function for the data loading thread."""
     try:
-        # Pass the queue to the data loader
-        overall_success, final_detailed_messages = data_loader.load_all_required_tables(
-            progress_queue=st.session_state.progress_queue
-        )
-        st.session_state.dialog_overall_success = overall_success
-        # The callback already populates detailed_messages, but final_detailed_messages from loader might be more holistic
-        # For simplicity, let's trust the callback's accumulation for now, or decide on one source of truth.
-        # If final_detailed_messages is preferred, then clear and set:
-        # st.session_state.dialog_detailed_messages = final_detailed_messages 
-        if overall_success:
-            st.session_state.data_loaded_once = True
-            st.session_state.data_fully_loaded = True # Enable navigation to other pages
-            st.session_state.data_load_timestamp = datetime.now()
+        # Simular progreso para que el usuario sepa que la aplicación está inicializando
+        # En este nuevo enfoque, no cargamos datos globalmente, cada página lo hace por su cuenta
+        
+        # Emitir mensajes de progreso a través de la cola
+        progress_steps = [
+            {"progress": 0.2, "message": "Inicializando aplicación...", "status_type": "info", "table_name": "Sistema"},
+            {"progress": 0.5, "message": "Preparando la interfaz...", "status_type": "info", "table_name": "Sistema"},
+            {"progress": 0.8, "message": "Configurando conexiones...", "status_type": "info", "table_name": "Sistema"},
+            {"progress": 1.0, "message": "¡Listo! Aplicación inicializada correctamente", "status_type": "success", "table_name": "Sistema"}
+        ]
+        
+        for step in progress_steps:
+            st.session_state.progress_queue.put(step)
+            time.sleep(0.5)  # Simular tiempo de carga
+            
+        # Marcar como exitoso
+        st.session_state.dialog_overall_success = True
+        st.session_state.data_loaded_once = True
+        st.session_state.data_fully_loaded = True  # Agregar esta bandera para habilitar la navegación
+        st.session_state.data_load_timestamp = datetime.now()
     except Exception as e:
         st.session_state.dialog_overall_success = False
         st.session_state.dialog_detailed_messages.append({
-            "type": "error", "table": "Sistema", "message": f"Error crítico en el cargador: {str(e)}"
+            "type": "error", "table": "Sistema", "message": f"Error al inicializar la aplicación: {str(e)}"
         })
     finally:
-        st.session_state.dialog_progress_value = 1.0 # Ensure bar is full
+        st.session_state.dialog_progress_value = 1.0  # Ensure bar is full
         st.session_state.dialog_loading_finished = True
         st.session_state.dialog_loader_thread_active = False
-        # Trigger a final rerun from main thread context if possible, or rely on dialog's close button.
 
 def start_threaded_data_load(clear_cache=False):
-    """Initiates the data loading process in a separate thread."""
+    """Inicia el proceso de inicialización de la aplicación en un hilo separado."""
     if st.session_state.get('dialog_loader_thread_active', False):
-        st.toast("La carga de datos ya está en progreso.", icon="⏳")
+        st.toast("La inicialización ya está en progreso.", icon="⏳")
         return
 
     if clear_cache:
-        data_loader.clear_cache() # Assuming a method to clear cached DataFrames
-        st.session_state.data_loaded_once = False # Force full reload visuals if cache cleared
+        # Ya no usamos data_loader.clear_cache()
+        # Simplemente reiniciamos los estados de sesión relevantes
+        st.session_state.data_loaded_once = False
 
     # Reset dialog state for a new loading operation
     st.session_state.dialog_is_open = True
     st.session_state.dialog_progress_value = 0.0
-    st.session_state.dialog_progress_message = "Iniciando carga de datos..."
+    st.session_state.dialog_progress_message = "Iniciando la aplicación..."
     st.session_state.dialog_detailed_messages = []
     st.session_state.dialog_loading_finished = False
     st.session_state.dialog_overall_success = True # Assume success until failure
@@ -347,77 +350,91 @@ Explore las siguientes secciones para aprovechar al máximo la plataforma:
     
     st.markdown("<br>", unsafe_allow_html=True)  # Espacio adicional
     
-    # Obtener los datos para las métricas
-    try:
-        # data_loader is the global instance initialized at the top of the script
-        # df = data_loader.get_desglosado_dataframe() # Assuming this method exists or use get_dataframe
-        # df_consulta = data_loader.get_consulta_dataframe() # Assuming this method exists or use get_dataframe
-                    # Obtener el DataFrame de la vista de kiosko
-        df = data_loader.get_desglosado_dataframe()
-        df_consulta = data_loader.get_consulta_dataframe()
+    # Helper function to format dates
+    def format_date_to_spanish(date_value):
+        if isinstance(date_value, str):
+            try:
+                date_value = pd.to_datetime(date_value)
+            except:
+                return str(date_value)
+        
+        if isinstance(date_value, pd.Timestamp):
+            meses_es = {
+                1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+                5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+                9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+            }
+            mes_es = meses_es.get(date_value.month, f"Mes {date_value.month}")
+            return f"{date_value.day} de {mes_es} {date_value.year}"
+        else:
+            return str(date_value)
 
-        # Calcular las métricas
+    # Obtener los datos para las métricas
+    # Initialize metrics with default values
+    obras_count = 0
+    total_facturado_fmt = "$0.00"
+    ultima_actualizacion_fmt = "No disponible"
+    total_conceptos = 0
+    ultimo_registro = "No disponible"
+    top_concepto = "No disponible"
+    nombres = "No disponible"
+
+    # Inicializar cliente Supabase directamente con las variables ya obtenidas
+    try:
+        supabase = create_client(supabase_url, supabase_key)
+        
         # 1. Cantidad de obras únicas
-        obras_count = len(df["obra"].unique()) if df is not None and "obra" in df.columns and not df.empty else 0
-        
+        obras_response = supabase.table("portal_desglosado").select("obra").execute()
+        obras_count = obras_response.data
+        unique_obras = list({item["obra"] for item in obras_count if "obra" in item})
+        obras_count = len(unique_obras)
+
         # 2. Total facturado
-        total_facturado = df["total"].sum() if "total" in df.columns and not df.empty else 0
-        total_facturado_fmt = f"${total_facturado:,.2f}"
-        
-        # 3. Última actualización (fecha más reciente)
-        if "fecha_consulta" in df_consulta.columns and not df_consulta.empty and not df_consulta["fecha_consulta"].isna().all():
-            # Función auxiliar para formatear fechas
-            def format_date_to_spanish(date_value):
-                # Si es string, intentar convertir a datetime
-                if isinstance(date_value, str):
-                    try:
-                        date_value = pd.to_datetime(date_value)
-                    except:
-                        return str(date_value)  # Si falla, devolver como string
-                
-                # Si ahora es un timestamp, formatearlo adecuadamente
-                if isinstance(date_value, pd.Timestamp):
-                    # Diccionario de meses en español
-                    meses_es = {
-                        1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
-                        5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
-                        9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
-                    }
-                    # Construir la fecha en formato '25 de Mayo 2025'
-                    mes_es = meses_es.get(date_value.month, f"Mes {date_value.month}")
-                    return f"{date_value.day} de {mes_es} {date_value.year}"
-                else:
-                    # Si no es un timestamp, devolver como string
-                    return str(date_value)
-            
-            # Obtener la fecha más reciente y formatearla
-            ultima_actualizacion = df_consulta["fecha_consulta"].max()
-            ultima_actualizacion_fmt = format_date_to_spanish(ultima_actualizacion)
+        total_facturado_response = supabase.table("portal_desglosado").select("subtotal").execute()
+        total_facturado_data = total_facturado_response.data
+        total_facturado = sum(item.get('subtotal', 0) for item in total_facturado_data)
+        total_facturado_fmt = f"${total_facturado:,.2f}" if total_facturado else "$0.00"
+
+        # 3. Última actualización de datos (basado en la fecha más reciente de 'fecha_factura')
+        latest_date_response = supabase.table("portal_desglosado").select("fecha_factura").order("fecha_factura", desc=True).limit(1).maybe_single().execute()
+        latest_date_data = latest_date_response.data
+        if latest_date_data and latest_date_data.get("fecha_factura"):
+            ultima_actualizacion_fmt = format_date_to_spanish(pd.to_datetime(latest_date_data["fecha_factura"]))
         else:
             ultima_actualizacion_fmt = "No disponible"
         
-        # 4. Total conceptos registrados (filas del dataframe)
-        total_conceptos = len(df) if not df.empty else 0
-        
-        # 5. Último registro capturado (misma fecha que última actualización)
-        ultimo_registro = ultima_actualizacion_fmt  # Ya tiene el formato correcto de '25 de Mayo 2025'
-        
-        # 6. Conceptos más facturados (Top subcategorías por total)
-        if "subcategoria" in df.columns and "total" in df.columns and not df.empty:
-            top_conceptos = df["subcategoria"].value_counts().nlargest(3)
-            top_concepto = top_conceptos.index[0] if not top_conceptos.empty else "No disponible"
-        else:
-            top_concepto = "No disponible"
-            
-    except Exception as e:
-        st.error(f"Error al calcular métricas: {str(e)}")
-        obras_count = 0
-        total_facturado_fmt = "$0.00"
-        ultima_actualizacion_fmt = "No disponible"
-        total_conceptos = 0
-        ultimo_registro = "No disponible"
-        top_concepto = "No disponible"
+        # 4. Total de conceptos únicos
+        total_conceptos = len(obras_response.data)  # Total number of rows returned
 
+        # 5. Último registro (concepto más reciente)
+        latest_date_response = supabase.table("portal_concentrado").select("fecha_consulta").order("fecha_consulta", desc=True).limit(1).maybe_single().execute()
+        latest_date_data = latest_date_response.data
+        if latest_date_data and latest_date_data.get("fecha_consulta"):
+            ultimo_registro = format_date_to_spanish(pd.to_datetime(latest_date_data["fecha_consulta"]))
+        else:
+            ultimo_registro = "No disponible"
+
+        # 6. Concepto más facturado (Top 1)
+        subcategoria_response = supabase.table("portal_desglosado").select("subcategoria").execute()
+        subcategoria_data = subcategoria_response.data
+
+        # Extract subcategoria values into a list
+        subcategorias = [item["subcategoria"] for item in subcategoria_data if item.get("subcategoria")]
+
+        # Count frequencies and get the top 2 most common
+        if subcategorias:
+            subcategoria_counts = Counter(subcategorias)
+            top_2_subcategorias = subcategoria_counts.most_common(2)
+            # Extraer los nombres de las subcategorías
+            nombres = [item[0] for item in top_2_subcategorias]
+            # Unir los nombres en una cadena con ' - '
+            nombres = ' - '.join(nombres)
+        else:
+            nombres = "No disponible"
+
+    except Exception as e:
+        st.error(f"Error al calcular métricas del dashboard desde Supabase: {e}")
+    
     # Primera fila de métricas
     col1, col2, col3 = st.columns(3)
     
@@ -429,11 +446,12 @@ Explore las siguientes secciones para aprovechar al máximo la plataforma:
             <div class="card-delta-positive">Proyectos Registrados</div>
         </div>
         """, unsafe_allow_html=True)
+        
     
     with col2:
         st.markdown(f"""
         <div class="simple-card">
-            <div class="card-label">Total Facturado</div>
+            <div class="card-label">Subtotal Facturado ($)</div>
             <div class="card-value">{total_facturado_fmt}</div>
             <div class="card-delta-positive">Facturado a la fecha</div>
         </div>
@@ -442,7 +460,7 @@ Explore las siguientes secciones para aprovechar al máximo la plataforma:
     with col3:
         st.markdown(f"""
         <div class="simple-card">
-            <div class="card-label">Última Actualización</div>
+            <div class="card-label">Fecha de última factura</div>
             <div class="card-value">{ultima_actualizacion_fmt}</div>
             <div class="card-delta-positive">Fecha más reciente</div>
         </div>
@@ -466,15 +484,15 @@ Explore las siguientes secciones para aprovechar al máximo la plataforma:
         st.markdown(f"""
         <div class="simple-card">
             <div class="card-label">Concepto Más Facturado</div>
-            <div class="card-value">{top_concepto}</div>
-            <div class="card-delta-positive">Mayor valor total</div>
+            <div class="card-value">{nombres}</div>
+            <div class="card-delta-positive">Partidas más facturadas</div>
         </div>
         """, unsafe_allow_html=True)
         
     with col3:
         st.markdown(f"""
         <div class="simple-card">
-            <div class="card-label">Último Registro</div>
+            <div class="card-label">Actualizado a la fecha</div>
             <div class="card-value">{ultimo_registro}</div>
             <div class="card-delta-positive">Fecha de captura</div>
         </div>

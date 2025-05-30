@@ -9,6 +9,7 @@ from conversation_handler import determine_conversation_intent, generate_convers
 from langchain_core.messages import HumanMessage, AIMessage # <--- Added
 from pages.utils_3 import get_data_loader_instance
 from utils.config import get_config
+from supabase import create_client, Client
 
 
 # Cargar estilos personalizados si existen
@@ -101,48 +102,53 @@ with st.sidebar:
         
     st.subheader(":gear: Filtros de Datos")
     st.markdown("Estos filtros se aplicarán automáticamente a tus consultas:")
-    
-    # Filtro de Obra
-    # TODO: Populate these lists dynamically from the database if desired
-    obras_disponibles = [] # Example: ["K. Las Vias", "K. Aguamarina", "K. Residencial"]
-    
-    # Initialize data_loader and get unique values for filters
-    # Ensure 'get_data_loader_instance' and 'config' are imported at the top of the file:
-    # from utils.utils_3 import get_data_loader_instance
-    # from utils.config_loader import config
-    data_loader = get_data_loader_instance(load_data=True) # Ensures data is available
-    desglosado_table_key = "DESGLOSADO" # Get the key for the 'DESGLOSADO' table from config
 
-    obras_disponibles = data_loader.get_unique_values(desglosado_table_key, 'obra')
-    proveedores_disponibles = data_loader.get_unique_values(desglosado_table_key, 'proveedor')
-    subcategorias_disponibles = data_loader.get_unique_values(desglosado_table_key, 'subcategoria')
+    # --- Importar las funciones centralizadas ---
+    from utils.chatbot_supabase import init_chatbot_supabase_client, get_chatbot_filter_options
 
+    # --- Usar las funciones centralizadas con caché ---
+    supabase_client_chatbot = init_chatbot_supabase_client()
+
+    if supabase_client_chatbot:
+        chatbot_filter_opts = get_chatbot_filter_options(supabase_client_chatbot)
+    else:
+        # Fallback to empty options if Supabase client failed
+        chatbot_filter_opts = {key: [] for key in ['obras', 'proveedores', 'subcategorias', 'categorias']}
+        st.error("No se pudo conectar a Supabase. Los filtros no estarán disponibles.")
+
+    # --- Multiselect Filters using cached options ---
     obras_seleccionadas = st.multiselect(
         ":building_construction: Obra",
-        options=obras_disponibles,
+        options=chatbot_filter_opts['obras'],
         default=[],
         key="obra_filter",
         help="Seleccione una o más obras. Si no selecciona ninguna, se considerarán todas."
     )
 
-    # Filtro de Proveedor (proveedores_disponibles is now fetched above)
     proveedores_seleccionados = st.multiselect(
         ":busts_in_silhouette: Proveedor",
-        options=proveedores_disponibles,
+        options=chatbot_filter_opts['proveedores'],
         default=[],
         key="proveedor_filter",
         help="Seleccione uno o más proveedores. Si no selecciona ninguno, se considerarán todos."
     )
 
-    # Filtro de Subcategorías (proveedores_disponibles is now fetched above)
     subcategorias_seleccionados = st.multiselect(
-        ":busts_in_silhouette: Subcategorías",
-        options=subcategorias_disponibles,
+        ":bookmark_tabs: Subcategorías", # Changed icon for variety
+        options=chatbot_filter_opts['subcategorias'],
         default=[],
-        key="subcategorias_filter",
+        key="subcategoria_filter",
         help="Seleccione una o más subcategorías. Si no selecciona ninguna, se considerarán todas."
     )
-    
+
+    categorias_seleccionadas = st.multiselect(
+        ":label: Categoría",
+        options=chatbot_filter_opts['categorias'],
+        default=[],
+        key="categoria_filter",
+        help="Seleccione una o más categorías. Si no selecciona ninguna, se considerarán todas."
+    )
+
     st.divider()
     
     if st.button("Limpiar conversación", use_container_width=True):
@@ -351,10 +357,11 @@ def process_query_with_agent(user_input_text: str, current_streamlit_filters: di
             agent_response_data = run_sql_agent(
                 user_input=user_input_text,
                 chat_history=chat_history_for_agent,
-                streamlit_filters=agent_filters, # Corrected: Use agent_filters which has mapped keys
-                obras_disponibles=obras_disponibles, # Pass the list from sidebar
-                proveedores_disponibles=proveedores_disponibles, # Pass the list from sidebar
-                subcategorias_disponibles=subcategorias_disponibles, # Pass the list from sidebar
+                streamlit_filters=agent_filters, # These are the *selected* filters
+                obras_disponibles=chatbot_filter_opts['obras'], # Pass the *full list* of available options
+                proveedores_disponibles=chatbot_filter_opts['proveedores'], # Pass the *full list*
+                subcategorias_disponibles=chatbot_filter_opts['subcategorias'], # Pass the *full list*
+                # categoria_disponibles=chatbot_filter_opts['categorias'], # Add if your agent uses this
                 session_id=st.session_state.session_id,
                 user_id=st.session_state.user_id
             )

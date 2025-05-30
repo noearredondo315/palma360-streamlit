@@ -7,14 +7,12 @@ import matplotlib.pyplot as plt
 from utils.authentication import Authentication
 from utils.config import get_config
 from pages.utils_3 import get_data_loader_instance
+from supabase import create_client, Client
 
 # --- Verificar si los datos están completamente cargados ---
 if not st.session_state.get("data_fully_loaded", False):
     st.warning("Los datos aún se están cargando. Por favor, espera en la página principal hasta que se complete la carga.")
     st.stop()
-
-# Importar funciones centralizadas para acceso a datos
-from pages.utils_3 import get_column_mapping
 
 # Load custom CSS
 def load_css():
@@ -32,257 +30,271 @@ authentication = Authentication()
 st.title(":chart_with_upwards_trend: Visualización de Datos")
 st.markdown("Impulsado por PalmaTerra 360 | Módulo Facturas :speech_balloon: :llama:", help="Explora y visualiza datos de la empresa")
 
-# --- Carga de Datos Principal desde el cargador centralizado mejorado ---
-try:
-    # Usar el cargador centralizado mejorado para obtener los datos
-    data_loader = get_data_loader_instance(load_data=False)
-    
-    # Obtener el DataFrame de la vista de desglosado para visualización
-    data = data_loader.get_kiosko_dataframe()
-    
-    if data is None or data.empty:
-        st.warning("No se pudieron obtener los datos. Por favor regresa a la página principal para completar la carga.")
-        # Configurar valores por defecto para evitar errores posteriores
-        data = pd.DataFrame()
-        column_mapping = {}
-    else:
-        # Obtener el mapeo de columnas desde la configuración centralizada
-        column_mapping = get_column_mapping()
 
-except Exception as e:
-    st.error(f"Ocurrió un error inesperado durante la obtención de datos: {str(e)}")
-    # Fallback seguro
-    data = pd.DataFrame()
-    column_mapping = {}
+# Importar las funciones centralizadas desde el módulo de utilidades
+from utils.chatbot_supabase import init_chatbot_supabase_client, get_chatbot_filter_options
+
+# Usar las funciones centralizadas con caché
+supabase_client_chatbot = init_chatbot_supabase_client()
+
+
+if supabase_client_chatbot:
+    chatbot_filter_opts = get_chatbot_filter_options(supabase_client_chatbot)
+else:
+    # Fallback to empty options if Supabase client failed
+    chatbot_filter_opts = {key: [] for key in ['obras', 'proveedores', 'subcategorias', 'categorias']}
+    st.error("No se pudo conectar a Supabase. Los filtros no estarán disponibles.")
 
 # Contenido principal
 
+# Inicializar variables para los dataframes
+data = pd.DataFrame()
+filtered_data = pd.DataFrame()
+
+# Función para obtener datos filtrados de Supabase
+def get_filtered_data(client, categorias, subcategorias, cuentas_gasto):
+    try:
+        # Iniciar la consulta básica
+        query = client.table("portal_desglosado").select(
+            "obra, categoria_id, subcategoria, fecha_factura, total, proveedor, cuenta_gasto"
+        )
+        
+        # Aplicar filtros solo si hay selecciones (no vacías)
+        # Si la lista está vacía, no aplicamos el filtro para esa categoría
+        if categorias:
+            query = query.in_("categoria_id", categorias)
+            
+        if subcategorias:
+            query = query.in_("subcategoria", subcategorias)
+        
+        if cuentas_gasto:
+            query = query.in_("cuenta_gasto", cuentas_gasto)
+        
+        # Ejecutar la consulta
+        response = query.execute()
+        
+        if response.data:
+            # Convertir a DataFrame
+            df = pd.DataFrame(response.data)
+            
+            # Asegurar que la columna fecha_factura sea de tipo datetime
+            if 'fecha_factura' in df.columns:
+                df['fecha_factura'] = pd.to_datetime(df['fecha_factura'], errors='coerce')
+                
+            # Asegurar que total sea numérico
+            if 'total' in df.columns:
+                df['total'] = pd.to_numeric(df['total'], errors='coerce')
+                
+            return df
+        else:
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error al obtener datos filtrados: {e}")
+        return pd.DataFrame()
+
+# Inicializar variables de estado si no existen
+if 'viz_selected_categories' not in st.session_state:
+    st.session_state.viz_selected_categories = []
+if 'viz_selected_subcategorias' not in st.session_state:
+    st.session_state.viz_selected_subcategorias = []
+if 'viz_selected_obras' not in st.session_state:
+    st.session_state.viz_selected_obras = []
+if 'viz_data' not in st.session_state:
+    st.session_state.viz_data = pd.DataFrame()
+if 'viz_filtered_data' not in st.session_state:
+    st.session_state.viz_filtered_data = pd.DataFrame()
+if 'viz_submitted' not in st.session_state:
+    st.session_state.viz_submitted = False
+    
+# Inicializar variables locales para evitar errores de referencia
+data = st.session_state.viz_data
+filtered_data = st.session_state.viz_filtered_data
+
 # Sidebar con filtros globales y configuración
-with st.sidebar:
-    st.info(":gear: Filtros para Gráficos")
-    
-    # Solo mostrar filtros si hay datos disponibles
-    if not data.empty:
-        # 1. Filtros para categorías - mostrar TODAS las categorías disponibles
-        if 'categoria_id' in data.columns:
+with st.sidebar:    
+    # Crear un expander para los filtros
+    with st.expander("Filtros de Visualización", expanded=False):
+        # Usar un contenedor en lugar de un form con borde visible
+        # Crear un formulario para que solo se procesen los inputs cuando se hace clic en el botón
+        with st.form(key="filtros_form", border=False):
+            # 1. Filtros para categorías
             st.subheader(":label: Categorías")
-            all_categories = sorted(data['categoria_id'].astype(str).unique())
+            
+            all_categories = chatbot_filter_opts['categorias']
+            
             selected_categories = st.multiselect(
+                
                 "Selección de Categorías",
+                
                 options=all_categories,
-                default=[],  # Comenzar vacío según preferencia del usuario
+                
+                default=st.session_state.viz_selected_categories,  # Usar valores guardados
+                
                 key="global_categorias_multiselect"
+            
             )
-            # Si está vacío, considerar todas las categorías como seleccionadas
-            if not selected_categories:
-                selected_categories = all_categories
-        else:
-            selected_categories = []
-        
-        # 2. Filtro de Subcategorías - mostrar TODAS por defecto
-        if 'subcategoria' in data.columns:
+            
+            
+            
+            # 2. Filtro de Subcategorías
+            
             st.subheader(":bookmark_tabs: Subcategorías")
-            all_subcategorias = sorted(data['subcategoria'].astype(str).unique())
             
-            # Mostrar todas las subcategorías disponibles siempre
+            all_subcategorias = chatbot_filter_opts['subcategorias']
+            
             selected_subcategorias = st.multiselect(
+                
                 "Selección de Subcategorías",
+                
                 options=all_subcategorias,
-                default=[],
+                
+                default=st.session_state.viz_selected_subcategorias,  # Usar valores guardados
+                
                 key="global_subcats_multiselect"
-            )
-            # Si no hay selección, usar todas las subcategorías
-            if not selected_subcategorias:
-                selected_subcategorias = all_subcategorias
-        else:
-            selected_subcategorias = []
             
-        # 3. Filtro de rango de fechas (su visualización se muestra después de Obras)
-        # Inicializar variables para fechas
-        start_date_ts, end_date_ts = None, None
-        min_date_obj, max_date_obj = None, None
-        reset_dates = False
-        
-        # Obtener valores de fechas min/max (para inicialización y reseteo)
-        if 'fecha_factura' in data.columns and not data['fecha_factura'].isna().all():
-            min_date = data['fecha_factura'].min()
-            max_date = data['fecha_factura'].max()
-            if pd.notna(min_date) and pd.notna(max_date):
-                min_date_obj = min_date.date() if isinstance(min_date, pd.Timestamp) else min_date
-                max_date_obj = max_date.date() if isinstance(max_date, pd.Timestamp) else max_date
-                
-                # Inicializar fechas globales
-                if 'reset_date_filter' in st.session_state and st.session_state.reset_date_filter:
-                    # Si se pidió resetear, usar fechas completas
-                    start_date_ts = pd.Timestamp(min_date_obj)
-                    end_date_ts = pd.Timestamp(max_date_obj)
-                    # Limpiar flag de reseteo
-                    st.session_state.reset_date_filter = False
-                    reset_dates = True
-                else:
-                    # Mostrar el widget de selección de fechas (aunque aún no se muestra visualmente)
-                    date_key = "global_date_input"
-                    current_dates = st.session_state.get(date_key, (min_date_obj, max_date_obj))
-                    # Obtener fechas actuales del selector
-                    if len(current_dates) == 2:
-                        start_date_ts = pd.Timestamp(current_dates[0])
-                        end_date_ts = pd.Timestamp(current_dates[1])
-                    else:
-                        start_date_ts = pd.Timestamp(min_date_obj)
-                        end_date_ts = pd.Timestamp(max_date_obj)
-        
-        # Filtrar datos por rango de fechas para calcular top obras
-        date_filtered_data = data.copy()
-        if start_date_ts is not None and end_date_ts is not None:
-            # Asegurar que la columna 'FECHA FACTURA' sea datetime para comparaciones
-            if 'fecha_factura' in date_filtered_data.columns:
-                # Convertir a datetime si no lo es
-                if not pd.api.types.is_datetime64_any_dtype(date_filtered_data['fecha_factura']):
-                    date_filtered_data['fecha_factura'] = pd.to_datetime(date_filtered_data['fecha_factura'], errors='coerce')
-                # Filtrar solo filas con fechas válidas
-                date_filtered_data = date_filtered_data[~date_filtered_data['fecha_factura'].isna()]
-                
-                # Normalizar zonas horarias
-                # Convertir start_date_ts y end_date_ts a la zona horaria de los datos
-                # Si tiene zona horaria, convertir a naive (sin zona horaria)
-                if hasattr(date_filtered_data['fecha_factura'].dtype, 'tz'):
-                    date_filtered_data['fecha_factura'] = date_filtered_data['fecha_factura'].dt.tz_localize(None)
-                    # También asegurar que start_date_ts y end_date_ts no tengan zona horaria
-                    if hasattr(start_date_ts, 'tz_localize'):
-                        start_date_ts = start_date_ts.tz_localize(None)
-                    if hasattr(end_date_ts, 'tz_localize'):
-                        end_date_ts = end_date_ts.tz_localize(None)
-                # O alternativamente, si los timestamps no tienen zona horaria pero los datos sí
-                elif start_date_ts is not None and end_date_ts is not None:
-                    # Asegurar que los timestamps para comparación sean naive
-                    if hasattr(start_date_ts, 'tz') and start_date_ts.tz is not None:
-                        start_date_ts = start_date_ts.tz_localize(None)
-                    if hasattr(end_date_ts, 'tz') and end_date_ts.tz is not None:
-                        end_date_ts = end_date_ts.tz_localize(None)
-                
-                # Aplicar filtro de fechas
-                date_filtered_data = date_filtered_data[(date_filtered_data['fecha_factura'] >= start_date_ts) & 
-                                                    (date_filtered_data['fecha_factura'] <= end_date_ts)]
-                
-        # 4. Filtro de Obras - mostrar todas pero usar top 10 por defecto según rango de fechas
-        if 'obra' in data.columns:
+            )
+            
+            
+            
+            # 3. Filtro de Obras
+            
             st.subheader(":building_construction: Obras")
-            all_obras = sorted(data['obra'].astype(str).unique())
             
-            # Calcular las top 10 obras por monto total BASADO EN EL RANGO DE FECHAS SELECCIONADO
-            top_obras_df = date_filtered_data.copy()  # Usar datos filtrados por fecha
-            top_obras_df['total'] = pd.to_numeric(top_obras_df['total'], errors='coerce')
-            top_obras = top_obras_df.groupby('obra')['total'].sum().nlargest(10).index.tolist()  # 10 obras
+            all_obras = chatbot_filter_opts['obras']
             
-            # Mostrar todas las obras disponibles en el selector
             selected_obras = st.multiselect(
-                "Selección de Obras",
-                options=all_obras,
-                default=[],
-                key="global_obras_multiselect"
-            )
-            
-            # Si no hay selección, usar las top 10 obras del periodo seleccionado internamente
-            if not selected_obras:
-                # Obtener fechas actuales para el mensaje - esto asegura que las fechas mostradas
-                # coincidan con las fechas realmente utilizadas para filtrar
-                fecha_inicio = start_date_ts.strftime('%d/%m/%Y') if start_date_ts else 'inicio'
-                fecha_fin = end_date_ts.strftime('%d/%m/%Y') if end_date_ts else 'fin'
-                st.caption(f"Sin selección: mostrando las 10 obras principales por monto total del periodo {fecha_inicio} al {fecha_fin}")
-                selected_obras = top_obras
-        else:
-            selected_obras = []
-            
-        # 5. Widget visual de Rango de Fechas (aunque la lógica se procesa antes)
-        if 'fecha_factura' in data.columns and not data['fecha_factura'].isna().all() and min_date_obj is not None and max_date_obj is not None:
-            st.subheader(":calendar: Rango de Fechas")
-            
-            # Inicializar la bandera de reseteo si no existe
-            if 'reset_date_filter' not in st.session_state:
-                st.session_state.reset_date_filter = False
-            
-            # Determinar el valor inicial a mostrar
-            initial_dates = (min_date_obj, max_date_obj) if reset_dates else (start_date_ts.date(), end_date_ts.date())
-            
-            # Widget de selección de fechas
-            date_range = st.date_input(
-                "Periodo",
-                value=initial_dates,
-                min_value=min_date_obj,
-                max_value=max_date_obj,
-                key="global_date_input"
-            )
-            
-            # Botón para resetear el filtro de fechas
-            if st.button("🔄 Resetear rango de fechas", help="Volver al rango completo de fechas"):
-                # En lugar de modificar el widget directamente, establecemos una bandera
-                st.session_state.reset_date_filter = True
-                st.rerun()
                 
-            # Actualizamos start_date_ts y end_date_ts con los valores del widget
-            # (estos valores ya fueron usados antes para el cálculo de las obras principales)
-            if len(date_range) == 2:
-                # No necesitamos actualizar nada aquí, ya que estos valores
-                # ya fueron procesados en la parte superior de la lógica
-                pass
+                "Selección de Obras",
+                
+                options=all_obras,
+                
+                default=st.session_state.viz_selected_obras,  # Usar valores guardados
+                
+                key="global_obras_multiselect"
+            
+            )
+            
+            
+            
+            # Botón para limpiar filtros
+            col1, col2 = st.columns(2)
+            with col1:
+                clear_button = st.form_submit_button(":broom: Limpiar", use_container_width=True)
+            
+            # Botón para enviar el formulario
+            with col2:
+                submitted = st.form_submit_button(":bar_chart: Graficar", use_container_width=True, type="primary")
     
-    # Separador para la configuración del mapa
-    st.divider()
-    
-    # Eliminada la configuración específica del mapa ya que se ha quitado esa funcionalidad
-    
-    # authentication.logout()
 
+# Ya no necesitamos manejar valores por defecto de esta manera
+# porque estamos utilizando session_state y respetamos los valores vacíos
+# Esto evita que se seleccionen todas las opciones cuando el usuario no selecciona ninguna
 
-# Preparar datos filtrados para los gráficos (solo se usarán en la pestaña de gráficos)
-if not data.empty:
-    filtered_data = data.copy()
+# Procesamiento del botón Limpiar
+if 'clear_button' in locals() and clear_button:
+    # Limpiar los filtros y el estado
+    st.session_state.viz_selected_categories = []
+    st.session_state.viz_selected_subcategorias = []
+    st.session_state.viz_selected_obras = []
+    st.session_state.viz_data = pd.DataFrame()
+    st.session_state.viz_filtered_data = pd.DataFrame()
+    st.session_state.viz_submitted = False
     
-    # Aplicar filtro de categorías
-    if 'categoria_id' in filtered_data.columns and selected_categories:
-        filtered_data = filtered_data[filtered_data['categoria_id'].astype(str).isin(map(str, selected_categories))]
-    
-    # Aplicar filtro de fechas
-    if start_date_ts and end_date_ts and 'fecha_factura' in filtered_data.columns:
-        # Asegurar que la columna fecha_factura sea datetime para comparaciones
-        if not pd.api.types.is_datetime64_any_dtype(filtered_data['fecha_factura']):
-            filtered_data['fecha_factura'] = pd.to_datetime(filtered_data['fecha_factura'], errors='coerce')
-        # Eliminar filas con fechas inválidas
-        filtered_data = filtered_data[~filtered_data['fecha_factura'].isna()]
-        
-        # Normalizar zonas horarias
-        # Si tiene zona horaria, convertir a naive (sin zona horaria)
-        if hasattr(filtered_data['fecha_factura'].dtype, 'tz'):
-            filtered_data['fecha_factura'] = filtered_data['fecha_factura'].dt.tz_localize(None)
-            # También asegurar que start_date_ts y end_date_ts no tengan zona horaria
-            if hasattr(start_date_ts, 'tz_localize'):
-                start_date_ts = start_date_ts.tz_localize(None)
-            if hasattr(end_date_ts, 'tz_localize'):
-                end_date_ts = end_date_ts.tz_localize(None)
-        # O alternativamente, si los timestamps no tienen zona horaria pero los datos sí
-        elif start_date_ts is not None and end_date_ts is not None:
-            # Asegurar que los timestamps para comparación sean naive
-            if hasattr(start_date_ts, 'tz') and start_date_ts.tz is not None:
-                start_date_ts = start_date_ts.tz_localize(None)
-            if hasattr(end_date_ts, 'tz') and end_date_ts.tz is not None:
-                end_date_ts = end_date_ts.tz_localize(None)
-        
-        # Ahora es seguro aplicar el filtro
-        filtered_data = filtered_data[
-            (filtered_data['fecha_factura'] >= start_date_ts) &
-            (filtered_data['fecha_factura'] <= end_date_ts)
-        ]
-    
-    # Aplicar filtro de obras
-    if 'obra' in filtered_data.columns and selected_obras:
-        filtered_data = filtered_data[filtered_data['obra'].astype(str).isin(map(str, selected_obras))]
-    
-    # Aplicar filtro de subcategorías
-    if 'subcategoria' in filtered_data.columns and selected_subcategorias:
-        filtered_data = filtered_data[filtered_data['subcategoria'].astype(str).isin(map(str, selected_subcategorias))]
-else:
+    # Limpiar las variables locales también
+    data = pd.DataFrame()
     filtered_data = pd.DataFrame()
+    st.rerun()
+    
+# Cuando se hace clic en el botón de Graficar dentro del formulario
+if ('submitted' in locals() and submitted) or st.session_state.viz_submitted:
+    with st.spinner("Obteniendo datos filtrados..."):
+        if supabase_client_chatbot:
+            # Usar los valores de filtro correctos dependiendo del contexto
+            if 'submitted' in locals() and submitted:
+                # Si se presionó el botón de graficar, usar los valores seleccionados actualmente
+                filter_categories = selected_categories
+                filter_subcategorias = selected_subcategorias
+                filter_obras = selected_obras
+            else:
+                # Si se está restaurando el estado, usar los valores guardados en session_state
+                filter_categories = st.session_state.viz_selected_categories
+                filter_subcategorias = st.session_state.viz_selected_subcategorias
+                filter_obras = st.session_state.viz_selected_obras
+                
+            # Convertir las obras seleccionadas a sus cuentas_gasto correspondientes
+            selected_cuentas_gasto = []
+            for obra in filter_obras:
+                if obra in chatbot_filter_opts['obra_to_cuenta_gasto']:
+                    cuenta_gasto = chatbot_filter_opts['obra_to_cuenta_gasto'][obra]
+                    selected_cuentas_gasto.append(cuenta_gasto)
+            
+            # Si se presionó el botón, actualizar el estado con nuevos valores
+            if 'submitted' in locals() and submitted:
+                # Actualizar el estado en session_state
+                st.session_state.viz_selected_categories = selected_categories
+                st.session_state.viz_selected_subcategorias = selected_subcategorias
+                st.session_state.viz_selected_obras = selected_obras
+                st.session_state.viz_submitted = True
+                
+                # Obtener los datos filtrados
+                data = get_filtered_data(
+                    supabase_client_chatbot, 
+                    filter_categories, 
+                    filter_subcategorias, 
+                    selected_cuentas_gasto  # Pasar las cuentas_gasto en lugar de las obras
+                )
+                
+                # Guardar los datos en session_state
+                st.session_state.viz_data = data
+                st.session_state.viz_filtered_data = data.copy()
+            else:
+                # Verificamos si hay datos guardados en session_state
+                if not st.session_state.viz_data.empty:
+                    # Obtener los datos guardados en session_state
+                    data = get_filtered_data(
+                        supabase_client_chatbot, 
+                        filter_categories, 
+                        filter_subcategorias, 
+                        selected_cuentas_gasto  # Pasar las cuentas_gasto en lugar de las obras
+                    )
+                    
+                    # Actualizar los datos en session_state
+                    st.session_state.viz_data = data
+                    st.session_state.viz_filtered_data = data.copy()
+                else:
+                    # No hay datos, usar DataFrames vacíos
+                    data = pd.DataFrame()
+                    st.session_state.viz_data = data
+                    st.session_state.viz_filtered_data = data.copy()
+                    
+            # Asegurarse de que filtered_data siempre esté definida
+            filtered_data = st.session_state.viz_filtered_data
+            
+            # Mostrar resumen de datos obtenidos
+            if not data.empty:
+                st.success(f"Datos obtenidos: {len(data)} registros")
+                
+                # Mostrar resumen de filtros aplicados
+                filter_summary = []
+                if st.session_state.viz_selected_categories:
+                    filter_summary.append(f"Categorías: {len(st.session_state.viz_selected_categories)}")
+                if st.session_state.viz_selected_subcategorias:
+                    filter_summary.append(f"Subcategorías: {len(st.session_state.viz_selected_subcategorias)}")
+                if st.session_state.viz_selected_obras:
+                    filter_summary.append(f"Obras: {len(st.session_state.viz_selected_obras)}")
+                    
+                if filter_summary:
+                    st.info(f"Filtros aplicados: {', '.join(filter_summary)}")
+                else:
+                    st.info("No se aplicaron filtros específicos. Se muestran todos los datos.")
+            else:
+                st.warning("No se encontraron datos con los filtros seleccionados.")
+        else:
+            st.error("No se pudo conectar a Supabase. Verifique la conexión.")
 
+# Asegurarse de que filtered_data esté definida incluso fuera del flujo principal
+if 'filtered_data' not in locals() or filtered_data is None:
+    filtered_data = st.session_state.viz_filtered_data
 
 # Mostrar información sobre los filtros aplicados
 if not data.empty:
@@ -300,38 +312,71 @@ if not data.empty:
             has_obra = 'obra' in filtered_data.columns
             
             if has_category and has_total:
-                # Título según si tenemos datos de obra o no
+                # Verificar si existe la columna cuenta_gasto
+                has_cuenta_gasto = 'cuenta_gasto' in filtered_data.columns
+                
+                # Título según si tenemos datos de obra y cuenta_gasto
                 title = "Total por Categoría y Obra" if has_obra else "Total por Categoría"
                 st.subheader(title)
                 
                 # Preparar datos para el gráfico
-                if has_obra:
-                    # Agrupar por categoría y obra
+                if has_obra and has_category and has_cuenta_gasto:
+                    # Copiar los datos filtrados para no modificar el original
+                    temp_data = filtered_data.copy()
+                    
+                    # Extraer la obra base de cada nombre de obra (quitar '/Servicios', '/Garantías', etc.)
+                    temp_data['obra_base'] = temp_data['obra'].str.split('/').str[0].str.strip()
+                    
+                    # Agrupar por categoría y cuenta_gasto (para barras separadas)
+                    # y luego por obra (para apilar variantes dentro de cada cuenta_gasto)
+                    bar_chart_data = temp_data.groupby(['categoria_id', 'obra_base', 'obra'])['total'].sum().reset_index()
+                    
+                    # Usar barmode='group' para tener barras separadas por obra_base
+                    # Las variantes se apilarán dentro de cada obra_base
+                    barmode = 'group'
+                elif has_obra and has_category:
+                    # Agrupar por categoría y obra cuando no hay cuenta_gasto
                     bar_chart_data = filtered_data.groupby(['categoria_id', 'obra'])['total'].sum().reset_index()
-                    color_by = 'obra'
                     barmode = 'group'  # Barras agrupadas (no apiladas)
                 else:
                     # Solo agrupar por categoría
                     bar_chart_data = filtered_data.groupby('categoria_id')['total'].sum().reset_index()
-                    color_by = 'categoria_id'
                     barmode = 'relative'
                 
                 # Crear gráfico si hay datos
                 if not bar_chart_data.empty:
-                    # Crear gráfico de barras
-                    fig_bar = px.bar(
-                        bar_chart_data,
-                        x='categoria_id',
-                        y='total',
-                        color=color_by,
-                        barmode=barmode,
-                        title=title,
-                        labels={'categoria_id': 'Categoría', 'total': 'Total', 'obra': 'Obra'},
-                    )
+                    # Crear el gráfico dependiendo del caso
+                    if has_cuenta_gasto and 'cuenta_gasto' in bar_chart_data.columns:
+                        # Crear gráfico con barras agrupadas por obra_base
+                        fig_bar = px.bar(
+                            bar_chart_data,
+                            x='categoria_id',  # Categoría en el eje X
+                            y='total',
+                            color='obra',  # Colorear por obra completa (para distinguir variantes)
+                            barmode=barmode,  # 'group' para barras agrupadas por obra_base
+                            facet_row=None,  # No usar facetas
+                            title=title,
+                            labels={'categoria_id': 'Categoría', 'total': 'Total', 'obra': 'Obra', 'obra_base': 'Obra Base'},
+                            # Agrupar por obra_base para tener barras independientes
+                            # pero preservar la relación visual entre variantes de la misma obra
+                            custom_data=['obra_base']
+                        )
+                    else:
+                        # Gráfico estándar sin cuenta_gasto
+                        fig_bar = px.bar(
+                            bar_chart_data,
+                            x='categoria_id',  # Usar categoría como eje X
+                            y='total',
+                            color='obra',  # Colorear por obra
+                            barmode=barmode,
+                            title=title,
+                            labels={'categoria_id': 'Categoría', 'total': 'Total', 'obra': 'Obra'},
+                        )
                     # Ajustar el diseño para mejorar la visualización
                     fig_bar.update_layout(
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                        margin=dict(t=100)  # Mayor margen superior para la leyenda
+                        margin=dict(t=100),  # Mayor margen superior para la leyenda
+                        xaxis_title="Categoría"  # Cambiar el título del eje X a 'Obra'
                     )
                     st.plotly_chart(fig_bar, use_container_width=True)
                 else:
@@ -531,17 +576,3 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
-
-# # Add help information
-# st.markdown("---")
-# with st.expander(":information_source: Ayuda para la Visualización de Datos"):
-#     st.markdown("""
-#     ### Consejos para usar esta página:
-    
-#     - **Filtros de datos**: Utiliza los controles del sidebar para filtrar los datos por categoría, fecha y obras.
-#     - **Gráficos interactivos**: Puedes interactuar con los gráficos haciendo clic en las leyendas o elementos.
-#     - **Estadísticas**: Explora las diferentes visualizaciones para obtener insights sobre los datos.
-#     - **Análisis por categoría**: Revisa las tendencias por categoría y subcategoría para identificar patrones.
-    
-#     Para obtener más ayuda, contacta al administrador del sistema.
-#     """)

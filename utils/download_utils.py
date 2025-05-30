@@ -8,21 +8,22 @@ import threading
 import queue
 import io
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential
 import mimetypes
 import logging
 import uuid
 
-# Importar PyPDF2 para combinar PDFs
+# Importar pikepdf para combinar PDFs (más rápido y eficiente que PyPDF2)
 try:
-    from PyPDF2 import PdfMerger, PdfReader
-    HAS_PYPDF2 = True
+    import pikepdf
+    HAS_PIKEPDF = True
 except ImportError:
-    HAS_PYPDF2 = False
-    logging.warning("PyPDF2 no está instalado. La funcionalidad de combinación de PDFs no estará disponible.")
-    logging.warning("Para instalarlo, ejecuta: pip install PyPDF2")
+    HAS_PIKEPDF = False
+    logging.warning("pikepdf no está instalado. La funcionalidad de combinación de PDFs no estará disponible.")
+    logging.warning("Para instalarlo, ejecuta: pip install pikepdf")
 
 # Importar Pillow para conversión de imágenes a PDF
 try:
@@ -54,11 +55,23 @@ class DescargadorArchivo:
         self.content_type = None
         self.convertir_a_pdf = convertir_a_pdf
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=30))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=5))
     def descargar_archivo(self):
         """Descarga un archivo desde una URL con reintentos"""
         try:
-            response = requests.get(self.url, timeout=30, stream=True)
+            # Usar una sesión global compartida para reutilizar conexiones
+            if not hasattr(DescargadorArchivo, '_session'):
+                DescargadorArchivo._session = requests.Session()
+                # Configurar la sesión para reutilizar conexiones
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=20,
+                    pool_maxsize=20,
+                    max_retries=0  # Los reintentos los manejamos con tenacity
+                )
+                DescargadorArchivo._session.mount('http://', adapter)
+                DescargadorArchivo._session.mount('https://', adapter)
+            
+            response = DescargadorArchivo._session.get(self.url, timeout=10, stream=True)
             response.raise_for_status()
             self.content_type = response.headers.get('Content-Type', '')
             return response.content
@@ -73,17 +86,24 @@ class DescargadorArchivo:
         1. Comprobando si el Content-Type indica que es una imagen
         2. Intentando abrir el contenido con PIL para confirmar
         """
-        # Verificar por tipo MIME
+        # Verificar por tipo MIME - normalizar a minúsculas para mejorar detección
         if content_type:
+            content_type = content_type.lower()
             if content_type.startswith('image/'):
                 return True
                 
-            # Mapeo adicional de tipos MIME
+            # Mapeo mejorado de tipos MIME para imágenes
             mime_map_images = [
-                'image/jpeg', 'image/png', 'image/gif', 'image/bmp', 
-                'image/tiff', 'image/webp'
+                'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp', 
+                'image/tiff', 'image/webp', 'image/x-icon', 'image/svg+xml'
             ]
             if any(mime in content_type for mime in mime_map_images):
+                return True
+        
+        # Verificar por extensión en la URL
+        if hasattr(self, 'url') and self.url:
+            url_lower = self.url.lower()
+            if any(ext in url_lower for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp']):
                 return True
                 
         # Verificar intentando abrir con PIL si tenemos el contenido
@@ -227,13 +247,20 @@ class GestorDescargas:
     """
     Gestor de descargas múltiples con hilos
     """
-    def __init__(self, max_workers=10):
-        self.max_workers = max_workers
+    def __init__(self, max_workers=None):
+        # Configurar el número de workers basado en CPUs disponibles si no se especifica
+        if max_workers is None:
+            # Usar min para evitar crear demasiados hilos en sistemas con muchos núcleos
+            self.max_workers = min(multiprocessing.cpu_count() * 2, 20)
+        else:
+            self.max_workers = max_workers
+            
         self.cola_descargas = queue.Queue()
         self.resultados = []
         self.total_descargas = 0
         self.descargas_completadas = 0
         self.lock = threading.Lock()
+        self.session = requests.Session()  # Sesión compartida para todas las descargas
 
     def agregar_descarga(self, url, ruta_destino, convertir_a_pdf=True):
         """Agrega una descarga a la cola
@@ -286,27 +313,39 @@ class GestorDescargas:
                 if 'url' in locals():
                     self.cola_descargas.task_done()
 
-    def ejecutar_descargas(self, callback_progreso=None):
+    def ejecutar_descargas(self, callback_progreso=None, limite_ancho_banda_kb=None):
         """
         Ejecuta todas las descargas en la cola usando múltiples hilos
         
         Args:
             callback_progreso: Función opcional para informar del progreso (recibe porcentaje)
+            limite_ancho_banda_kb: Límite opcional de ancho de banda en KB/s
         """
         if self.total_descargas == 0:
             logger.warning("No hay descargas para procesar")
             return self.resultados
+        
+        # Almacenar el límite de ancho de banda si se proporciona
+        self.limite_ancho_banda_kb = limite_ancho_banda_kb
+        
+        # Crear pool de hilos con el número apropiado de workers
+        with ThreadPoolExecutor(max_workers=min(self.max_workers, self.total_descargas)) as executor:
+            # Preparar las tareas
+            futures = []
+            for _ in range(min(self.max_workers, self.total_descargas)):
+                futures.append(executor.submit(self._proceso_descarga))
             
-        # Crear pool de hilos
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Iniciar hilos de trabajadores
-            workers = [executor.submit(self._proceso_descarga) for _ in range(min(self.max_workers, self.total_descargas))]
-            
-            # Esperar a que todas las descargas estén completadas
-            while self.descargas_completadas < self.total_descargas:
-                time.sleep(0.1)
+            # Usar as_completed para procesar los resultados a medida que terminan
+            # y evitar el polling con time.sleep
+            for future in as_completed(futures):
+                try:
+                    future.result()  # Obtener resultado o excepción
+                except Exception as e:
+                    logger.error(f"Error en hilo de descarga: {e}")
+                
                 if callback_progreso:
-                    progreso = (self.descargas_completadas / self.total_descargas) * 100
+                    with self.lock:
+                        progreso = (self.descargas_completadas / self.total_descargas) * 100
                     callback_progreso(progreso)
             
         return self.resultados
@@ -328,26 +367,43 @@ class CombinadorPDF:
     """
     Clase para combinar múltiples PDFs en un solo archivo
     Con soporte para convertir automáticamente imágenes a PDF
+    Usa pikepdf para mayor rendimiento
     """
     def __init__(self):
-        self.can_combine = HAS_PYPDF2
+        self.can_combine = HAS_PIKEPDF
         self.can_convert = HAS_PILLOW
+        # Crear una sesión compartida para todas las descargas
+        self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=20,
+            pool_maxsize=20,
+            max_retries=0
+        )
+        self.session.mount('http://', adapter)
+        self.session.mount('https://', adapter)
     
     def descargar_archivo(self, url):
         """
         Descarga un archivo desde una URL y lo devuelve como bytes junto con su tipo MIME
+        Usa la sesión compartida para mejorar rendimiento
         """
         try:
-            response = requests.get(url, timeout=30, stream=True)
+            # Usar la sesión compartida
+            response = self.session.get(url, timeout=10, stream=True)
             response.raise_for_status()  # Verificar si hay errores HTTP
             
-            content_type = response.headers.get('Content-Type', '')
+            content_type = response.headers.get('Content-Type', '').lower()
             
             # Verificar si es PDF o imagen para mensajes informativos
             if 'application/pdf' not in content_type and '.pdf' not in url.lower():
-                # Si no es un PDF, verificar si es una imagen
-                es_imagen = any(tipo in content_type for tipo in ['image/jpeg', 'image/png', 'image/gif', 'image/tiff'])
-                if es_imagen:
+                # Determinar si es una imagen con detección mejorada
+                mime_images = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/tiff', 'image/bmp', 'image/webp']
+                ext_images = ['.jpg', '.jpeg', '.png', '.gif', '.tiff', '.tif', '.bmp', '.webp']
+                
+                es_imagen_mime = any(tipo in content_type for tipo in mime_images)
+                es_imagen_ext = any(ext in url.lower() for ext in ext_images)
+                
+                if es_imagen_mime or es_imagen_ext:
                     logging.info(f"URL es una imagen que será convertida a PDF: {url}")
                 else:
                     logging.warning(f"URL no parece ser un PDF ni una imagen reconocida: {url}, Content-Type: {content_type}")
@@ -436,6 +492,7 @@ class CombinadorPDF:
         """
         Combina varios documentos descargados desde URLs en un solo archivo PDF
         Convierte automáticamente las imágenes a PDF antes de combinarlas
+        Usa pikepdf para mejor rendimiento y menor consumo de memoria
         
         Args:
             urls: Lista de URLs a descargar y combinar
@@ -445,7 +502,7 @@ class CombinadorPDF:
             Tupla (éxito, mensaje)
         """
         if not self.can_combine:
-            return False, "PyPDF2 no está instalado. No se pueden combinar PDFs."
+            return False, "pikepdf no está instalado. No se pueden combinar PDFs."
         
         if not urls:
             return False, "No se proporcionaron URLs para combinar"
@@ -456,12 +513,12 @@ class CombinadorPDF:
             return False, "No hay URLs válidas para combinar"
             
         try:
-            merger = PdfMerger()
+            pdf_docs = []  # Lista para almacenar documentos PDF temporales
             pdf_count = 0
             url_errors = []
             conversiones = 0
             
-            # Descargar y combinar cada documento
+            # Descargar y preparar cada documento
             for url in urls:
                 archivo_bytes, tipo_mime = self.descargar_archivo(url)
                 if archivo_bytes:
@@ -477,11 +534,12 @@ class CombinadorPDF:
                                 url_errors.append(f"No se pudo convertir la imagen a PDF: {url}")
                                 continue
                                 
-                        # Intentar abrir como PDF
-                        pdf_file = io.BytesIO(archivo_bytes)
+                        # Guardar PDF en archivo temporal y añadirlo a la lista
                         try:
-                            pdf_reader = PdfReader(pdf_file)
-                            merger.append(pdf_reader)
+                            # Usar memoryview para evitar copias innecesarias de datos
+                            pdf_file = io.BytesIO(archivo_bytes)
+                            pdf = pikepdf.Pdf.open(pdf_file)
+                            pdf_docs.append(pdf)
                             pdf_count += 1
                         except Exception as e:
                             url_errors.append(f"Error al procesar como PDF: {url}: {str(e)}")
@@ -492,7 +550,7 @@ class CombinadorPDF:
                 else:
                     url_errors.append(f"Error al descargar {url}")
             
-            # Verificar si se combinó al menos un PDF
+            # Verificar si se pudo procesar al menos un PDF
             if pdf_count == 0:
                 return False, f"No se pudieron combinar documentos. Errores: {', '.join(url_errors)}"
             
@@ -500,8 +558,19 @@ class CombinadorPDF:
             directorio = os.path.dirname(ruta_destino)
             os.makedirs(directorio, exist_ok=True)
             
-            merger.write(ruta_destino)
-            merger.close()
+            # Combinar PDFs con pikepdf (más eficiente que PyPDF2)
+            pdf_final = pikepdf.Pdf.new()
+            
+            for pdf in pdf_docs:
+                pdf_final.pages.extend(pdf.pages)
+            
+            # Guardar el PDF combinado
+            pdf_final.save(ruta_destino)
+            
+            # Cerrar todos los PDF abiertos para liberar memoria
+            for pdf in pdf_docs:
+                pdf.close()
+            pdf_final.close()
             
             # Mensaje de resultados
             mensaje_base = f"PDF combinado exitosamente con {pdf_count} documentos"
