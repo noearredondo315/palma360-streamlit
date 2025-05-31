@@ -365,11 +365,16 @@ Explore las siguientes secciones para aprovechar al máximo la plataforma:
                 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
             }
             mes_es = meses_es.get(date_value.month, f"Mes {date_value.month}")
-            # Formatear hora en formato 12 horas (AM/PM)
-            hora = date_value.hour
+            # Formatear hora en formato 12 horas (AM/PM) restando 6 horas
+            # Restar 6 horas a la hora
+            hora_ajustada = date_value.hour - 6
+            # Manejar el caso donde la hora se vuelve negativa (día anterior)
+            if hora_ajustada < 0:
+                hora_ajustada += 24
+            
             minuto = date_value.minute
-            am_pm = "pm" if hora >= 12 else "am"
-            hora_12 = hora % 12
+            am_pm = "pm" if hora_ajustada >= 12 else "am"
+            hora_12 = hora_ajustada % 12
             if hora_12 == 0:
                 hora_12 = 12
             
