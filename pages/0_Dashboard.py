@@ -365,7 +365,15 @@ Explore las siguientes secciones para aprovechar al máximo la plataforma:
                 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
             }
             mes_es = meses_es.get(date_value.month, f"Mes {date_value.month}")
-            return f"{date_value.day} de {mes_es} {date_value.year}"
+            # Formatear hora en formato 12 horas (AM/PM)
+            hora = date_value.hour
+            minuto = date_value.minute
+            am_pm = "pm" if hora >= 12 else "am"
+            hora_12 = hora % 12
+            if hora_12 == 0:
+                hora_12 = 12
+            
+            return f"{date_value.day} de {mes_es} {date_value.year} {hora_12:02d}:{minuto:02d} {am_pm}"
         else:
             return str(date_value)
 
