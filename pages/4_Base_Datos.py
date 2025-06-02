@@ -2,12 +2,16 @@ from pickle import NONE
 import streamlit as st
 import pandas as pd
 import os
+import io
+import time
+import zipfile
+import numpy as np
+import matplotlib.pyplot as plt
+import tempfile
 from utils.authentication import Authentication
 from utils.dataframe_utils import custom_dataframe_explorer
 from utils.config import get_config
 from utils.download_utils import GestorDescargas, preparar_ruta_destino, CombinadorPDF, sanitizar_nombre_archivo
-import tempfile
-import time
 
 # --- Verificar si los datos están completamente cargados ---
 if not st.session_state.get("data_fully_loaded", False):
@@ -996,33 +1000,12 @@ if not data.empty or not data_contabilidad.empty:
                         help="'PDF por fila' combina los documentos de cada fila en un solo PDF. 'Un solo archivo' une todos los PDFs en un único archivo."
                     )
                     
-                    # Mostrar información sobre el destino y ofrecer selección de carpeta
+                    # Mostrar información sobre el destino y método de descarga
+                    st.subheader("💾 Descarga de archivos", divider="gray")
                     
-                    # Simplificar la interfaz al máximo - solo mostrar la ruta actual y un campo para modificarla directamente
-                    # En vez de usar botones que puedan cerrar el diálogo, usamos un campo de texto directo
-                    folder_path = st.text_input(
-                        "📂 Seleccione la carpeta de destino:",
-                        value=st.session_state.download_dir,
-                        key="direct_folder_path",
-                        help="Introduzca una ruta absoluta donde desea guardar los PDFs"
-                    )
-                    
-                    # Si el usuario ha cambiado la ruta, validarla y actualizarla
-                    if folder_path != st.session_state.download_dir:
-                        try:
-                            # Validar que la ruta sea absoluta
-                            if not os.path.isabs(folder_path):
-                                folder_path = os.path.abspath(folder_path)
-                            
-                            # Intentar crear el directorio si no existe
-                            if not os.path.exists(folder_path):
-                                os.makedirs(folder_path, exist_ok=True)
-                            
-                            # Actualizar la ruta de descarga
-                            st.session_state.download_dir = folder_path
-                            st.success(f"✅ Carpeta de destino: {folder_path}")
-                        except Exception as e:
-                            st.error(f"❌ Error al establecer la ruta: {str(e)}")
+                    # Mantener la variable en session_state por compatibilidad
+                    if 'download_dir' not in st.session_state:
+                        st.session_state.download_dir = "browser_download"
                     
                     
                     # Una sola línea informativa según el modo seleccionado
@@ -1062,17 +1045,12 @@ if not data.empty or not data_contabilidad.empty:
                     
                     # Botón para iniciar la descarga
                     if st.button("Iniciar descarga", key="start_download", type="primary"):
-                        # Crear una subcarpeta con la fecha dentro de la carpeta seleccionada por el usuario
+                        # Ya no necesitamos crear directorios locales, los archivos se descargaru00e1n directamente
                         fecha_actual = time.strftime('%Y-%m-%d')
-                        # Usar la carpeta que el usuario seleccionó en el campo de texto
-                        facturas_dir = os.path.join(st.session_state.download_dir, f'Facturas_{fecha_actual}')
                         
-                        # Crear el directorio si no existe
-                        if not os.path.exists(facturas_dir):
-                            os.makedirs(facturas_dir, exist_ok=True)
-                        
-                        # Actualizar la ruta final (ahora es una subcarpeta de la seleccionada)
-                        download_path = facturas_dir
+                        # Usaremos memoria para almacenar los PDFs generados
+                        st.session_state.generated_pdfs = []
+                        st.session_state.combined_pdf_bytes = None
                         
                         # Aplicar el ordenamiento al dataframe según las selecciones del usuario
                         df_to_process = selected_df.copy()
@@ -1085,26 +1063,22 @@ if not data.empty or not data_contabilidad.empty:
                                 ascending=[sort_directions[col] for col in sort_columns]
                             ).reset_index(drop=True)
                         
-                        # Crear gestor de descargas
-                        gestor = GestorDescargas(max_workers=10)
+                        # Inicializar lista para almacenar datos de PDFs
+                        if 'generated_pdfs' not in st.session_state:
+                            st.session_state.generated_pdfs = []
                         
-                        # Añadir descargas a la cola
-                        file_count = 0
-                        
-                        # Asegurar que la carpeta de destino exista y sea accesible
-                        try:
-                            # Usamos la variable download_path que contiene la ruta con la fecha
-                            os.makedirs(download_path, exist_ok=True)
-                        except Exception as e:
-                            # En caso de error, intentar con el directorio de descargas
-                            home_dir = os.path.expanduser('~')
-                            download_path = os.path.join(home_dir, 'Downloads', f'Facturas_{fecha_actual}')
-                            os.makedirs(download_path, exist_ok=True)
+                        # Limpiar lista anterior
+                        st.session_state.generated_pdfs = []
                         
                         # Inicializar variable para control de cancelación
                         if 'download_cancelled' not in st.session_state:
                             st.session_state.download_cancelled = False
                         st.session_state.download_cancelled = False
+                        
+                        gestor = GestorDescargas(max_workers=10)
+                        
+                        # Añadir descargas a la cola
+                        file_count = 0
                         
                         # Procesar según modo seleccionado - solo 'combined' y 'joined'
                         # Código común para ambos modos
@@ -1140,7 +1114,7 @@ if not data.empty or not data_contabilidad.empty:
                         counter = 0
                         total_docs = 0
                         combined_results = []
-                        all_combined_pdfs = []  # Para el modo 'joined'
+                        # Ya no necesitamos all_combined_pdfs ya que guardamos todo en memoria
                         
                         # Obtener el total de filas para calcular el progreso
                         total_rows = len(df_to_process)
@@ -1186,23 +1160,38 @@ if not data.empty or not data_contabilidad.empty:
                                 else:
                                     filename = f"{counter}_combinado_{time.strftime('%H%M%S')}_{idx}.pdf"
                             
-                            # Ruta destino para el PDF combinado
-                            ruta_combinada = os.path.join(download_path, filename)
-                            
-                            # Combinar los PDFs
-                            exito, mensaje = combinador.combinar_pdfs(urls, ruta_combinada)
+                            # Combinar los PDFs y guardarlos en memoria
+                            try:
+                                # Descargar todos los PDFs a memoria
+                                pdf_data = io.BytesIO()
+                                exito, mensaje, pdf_bytes = combinador.combinar_pdfs_a_memoria(urls)
+                                
+                                if exito and pdf_bytes:
+                                    # Guardar los datos del PDF para su descarga posterior
+                                    st.session_state.generated_pdfs.append({
+                                        'nombre': filename,
+                                        'datos': pdf_bytes,
+                                        'urls': urls,
+                                        'index': counter
+                                    })
+                                    exito = True
+                                    mensaje = f"PDF {filename} preparado para descarga"
+                                else:
+                                    exito = False
+                                    mensaje = f"Error al combinar PDFs: {mensaje}"
+                            except Exception as e:
+                                exito = False
+                                mensaje = f"Error al procesar PDFs: {str(e)}"
                             combined_results.append({
                                 'exito': exito,
                                 'mensaje': mensaje,
-                                'ruta': ruta_combinada,
                                 'urls': urls
                             })
                             
                             if exito:
                                 total_docs += 1
-                                # Guardar la ruta para el modo 'joined'
-                                if st.session_state.download_mode == 'joined' and os.path.exists(ruta_combinada):
-                                    all_combined_pdfs.append(ruta_combinada)
+                                # No necesitamos hacer nada más para el modo 'joined'
+                                # porque los PDFs ya están guardados en st.session_state.generated_pdfs
                         
                         # Actualizar progreso al 50% después de procesar todas las filas
                         progress_bar.progress(50)
@@ -1211,70 +1200,131 @@ if not data.empty or not data_contabilidad.empty:
                         # Mostrar resultados en formato de tabla
                         if combined_results:
                             # Si estamos en modo 'joined', combinar todos los PDFs en uno solo
-                            if st.session_state.download_mode == 'joined' and all_combined_pdfs:
+                            if st.session_state.download_mode == 'joined' and st.session_state.generated_pdfs:
                                 progress_text.write("Uniendo todos los PDFs en un solo archivo...")
-                                # Nombre para el archivo final
+                                # Crear un PDF combinado en memoria a partir de los PDFs individuales
                                 timestamp = time.strftime('%Y%m%d_%H%M%S')
-                                ruta_final = os.path.join(download_path, f"concentrado_{timestamp}.pdf")
+                                nombre_final = f"concentrado_{timestamp}.pdf"
                                 
-                                # Combinar todos los PDFs generados en uno solo
-                                from PyPDF2 import PdfMerger  # Importar aquí para asegurar que esté disponible
-                                merger = PdfMerger()
+                                progress_text.write("Combinando todos los PDFs en memoria...")
+                                
+                                # Usar BytesIO para trabajar en memoria
+                                pdf_final = io.BytesIO()
+                                # Usaremos el mismo combinador de PDFs que ya tenemos instanciado
                                 archivos_unidos = 0
-                                total_archivos = len(all_combined_pdfs)
+                                total_archivos = len(st.session_state.generated_pdfs)
                                 
                                 try:
-                                    # Importante: utilizamos el orden exacto en que se añadieron los PDFs a all_combined_pdfs
-                                    # Este orden corresponde al orden del dataframe visualizado
-                                    for i, pdf_path in enumerate(all_combined_pdfs):
+                                    # Extraer los bytes de cada PDF para pasarlos al combinador
+                                    lista_pdfs_bytes = []
+                                    for i, pdf_info in enumerate(st.session_state.generated_pdfs):
                                         # Verificar si se ha cancelado la descarga
                                         if st.session_state.download_cancelled:
                                             progress_text.write("Descarga cancelada por el usuario")
                                             break
                                                 
+                                        # Usar directamente los bytes almacenados
+                                        lista_pdfs_bytes.append(io.BytesIO(pdf_info['datos']))
+                                        
+                                        # Actualizar progreso - fase 2 (del 50% al 90%)
+                                        progress_percent = 50 + int((i + 1) / total_archivos * 40)
+                                        progress_bar.progress(progress_percent, text=f"Preparando PDFs ({i+1}/{total_archivos})")
+                                    
+                                    # Crear una lista temporal de URLs falsas para usar con combinar_pdfs_a_memoria
+                                    # Esto es un hack para reutilizar la función existente, que espera URLs
+                                    progress_text.write("Combinando PDFs en memoria...")
+                                    
+                                    # En lugar de descargar de URLs, vamos a abrir directamente los bytes con pikepdf
+                                    # y combinarlos manualmente como lo hace la función combinar_pdfs_a_memoria
+                                    import pikepdf
+                                    
+                                    # Crear un nuevo PDF
+                                    pdf_final_obj = pikepdf.Pdf.new()
+                                    
+                                    # Añadir cada PDF a la combinación
+                                    for i, pdf_bytes_io in enumerate(lista_pdfs_bytes):
                                         try:
-                                            merger.append(pdf_path)
+                                            # Abrir el PDF desde los bytes
+                                            pdf = pikepdf.Pdf.open(pdf_bytes_io)
+                                            # Añadir todas sus páginas al PDF final
+                                            pdf_final_obj.pages.extend(pdf.pages)
                                             archivos_unidos += 1
-                                            
-                                            # Actualizar progreso - fase 2 (del 50% al 90%)
-                                            # La segunda fase representa la unión de PDFs
-                                            progress_percent = 50 + min((i + 1) / total_archivos * 40, 40)
-                                            progress_bar.progress(int(progress_percent))
-                                            progress_text.write(f"Uniendo PDF {i+1} de {total_archivos}...")
-                                        except Exception:
-                                            pass  # Ignoramos errores silenciosamente
+                                        except Exception as e:
+                                            progress_text.write(f"⚠️ No se pudo unir el PDF #{i+1}: {str(e)}")
                                     
-                                    # Guardar el archivo final
-                                    progress_bar.progress(90)
-                                    progress_text.write("Finalizando: guardando archivo PDF unido...")
-                                    merger.write(ruta_final)
-                                    merger.close()
+                                    # Guardar el PDF combinado en memoria
+                                    pdf_final.seek(0)
+                                    pdf_final_obj.save(pdf_final)
+                                    pdf_final.seek(0)
+                                    pdf_bytes = pdf_final.read()
                                     
-                                    # Eliminar automáticamente los archivos individuales
-                                    for pdf_path in all_combined_pdfs:
-                                        try:
-                                            os.remove(pdf_path)
-                                        except Exception:
-                                            pass
+                                    # Cerrar el objeto PDF
+                                    pdf_final_obj.close()
                                     
-                                    # Completar la barra de progreso
-                                    progress_bar.progress(100)
-                                    progress_text.write(f"Completado: {archivos_unidos} PDFs unidos")
+                                    # Guardar los bytes para el botón de descarga
+                                    st.session_state.combined_pdf_bytes = pdf_bytes
+                                    st.session_state.combined_pdf_name = nombre_final
                                     
-                                    # Un solo mensaje de éxito
-                                    st.success(f"✅ Se han unido {archivos_unidos} PDFs en un solo archivo: {os.path.basename(ruta_final)}")
-                                
+                                    # Actualizar progreso - fase final (100%)
+                                    progress_bar.progress(100, text=f"¡Proceso completado! {archivos_unidos} PDFs unidos")
+                                    progress_text.write(f"✅ PDFs combinados correctamente. Listo para descargar.")
+                                    
+                                    # Crear un ZIP que contenga el PDF combinado
+                                    zip_buffer = io.BytesIO()
+                                    timestamp = time.strftime('%Y%m%d_%H%M%S')
+                                    zip_filename = f"documento_combinado_{timestamp}.zip"
+                                    
+                                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                                        zip_file.writestr(nombre_final, pdf_bytes)
+                                    
+                                    # Preparar el buffer para descarga
+                                    zip_buffer.seek(0)
+                                    zip_data = zip_buffer.getvalue()
+                                    
+                                    # Botón de descarga del ZIP
+                                    st.download_button(
+                                        label=f"💾 Descargar PDF combinado en ZIP",
+                                        data=zip_data,
+                                        file_name=zip_filename,
+                                        mime="application/zip",
+                                        key="download_combined_zip",
+                                        help="Haga clic para descargar el PDF combinado en un archivo ZIP"
+                                    )
+                                    
                                 except Exception as e:
+                                    progress_text.write(f"❌ Error al unir PDFs: {str(e)}")
                                     st.error(f"Error al combinar todos los PDFs: {e}")
                                         
-                            elif not st.session_state.download_mode == 'joined':
+                            else:  # modo 'combined'
                                 # Completar la barra de progreso para modo 'combined'
                                 progress_bar.progress(100)
                                 progress_text.write(f"Completado: {total_docs} PDFs generados")
                                 
                                 # Mensaje de éxito para modo 'combined' (PDF por fila)
                                 st.success(f"✅ Proceso finalizado: {total_docs} PDFs generados de {counter} filas procesadas")
-                                st.caption(f"📁 Destino: {st.session_state.download_dir}")
+                                
+                                # Crear un ZIP con todos los PDFs individuales
+                                zip_buffer = io.BytesIO()
+                                timestamp = time.strftime('%Y%m%d_%H%M%S')
+                                zip_filename = f"documentos_pdf_{timestamp}.zip"
+                                
+                                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                                    for pdf_info in st.session_state.generated_pdfs:
+                                        zip_file.writestr(pdf_info['nombre'], pdf_info['datos'])
+                                
+                                # Preparar el buffer para descarga
+                                zip_buffer.seek(0)
+                                zip_data = zip_buffer.getvalue()
+                                
+                                # Botón de descarga del ZIP completo
+                                st.download_button(
+                                    label=f"💾 Descargar todos los PDFs en un ZIP ({len(st.session_state.generated_pdfs)} archivos)",
+                                    data=zip_data,
+                                    file_name=zip_filename,
+                                    mime="application/zip",
+                                    key="download_all_zip",
+                                    help="Haga clic para descargar todos los PDFs en un solo archivo ZIP"
+                                )
 
                             # Mostrar errores solo si existen
                             errores = [res for res in combined_results if not res['exito']]

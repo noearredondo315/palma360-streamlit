@@ -488,29 +488,28 @@ class CombinadorPDF:
                 
         return False
     
-    def combinar_pdfs(self, urls, ruta_destino):
+    def combinar_pdfs_a_memoria(self, urls):
         """
-        Combina varios documentos descargados desde URLs en un solo archivo PDF
+        Combina varios documentos descargados desde URLs en un solo archivo PDF en memoria
         Convierte automáticamente las imágenes a PDF antes de combinarlas
         Usa pikepdf para mejor rendimiento y menor consumo de memoria
         
         Args:
             urls: Lista de URLs a descargar y combinar
-            ruta_destino: Ruta donde guardar el PDF combinado
             
         Returns:
-            Tupla (éxito, mensaje)
+            Tupla (éxito, mensaje, bytes_del_pdf)
         """
         if not self.can_combine:
-            return False, "pikepdf no está instalado. No se pueden combinar PDFs."
+            return False, "pikepdf no está instalado. No se pueden combinar PDFs.", None
         
         if not urls:
-            return False, "No se proporcionaron URLs para combinar"
+            return False, "No se proporcionaron URLs para combinar", None
         
         # Filtrar URLs vacías o None
         urls = [url for url in urls if url and isinstance(url, str)]
         if not urls:
-            return False, "No hay URLs válidas para combinar"
+            return False, "No hay URLs válidas para combinar", None
             
         try:
             pdf_docs = []  # Lista para almacenar documentos PDF temporales
@@ -534,7 +533,7 @@ class CombinadorPDF:
                                 url_errors.append(f"No se pudo convertir la imagen a PDF: {url}")
                                 continue
                                 
-                        # Guardar PDF en archivo temporal y añadirlo a la lista
+                        # Cargar PDF en memoria y añadirlo a la lista
                         try:
                             # Usar memoryview para evitar copias innecesarias de datos
                             pdf_file = io.BytesIO(archivo_bytes)
@@ -550,13 +549,8 @@ class CombinadorPDF:
                 else:
                     url_errors.append(f"Error al descargar {url}")
             
-            # Verificar si se pudo procesar al menos un PDF
             if pdf_count == 0:
-                return False, f"No se pudieron combinar documentos. Errores: {', '.join(url_errors)}"
-            
-            # Guardar el PDF combinado
-            directorio = os.path.dirname(ruta_destino)
-            os.makedirs(directorio, exist_ok=True)
+                return False, f"No se pudieron combinar documentos. Errores: {', '.join(url_errors)}", None
             
             # Combinar PDFs con pikepdf (más eficiente que PyPDF2)
             pdf_final = pikepdf.Pdf.new()
@@ -564,8 +558,11 @@ class CombinadorPDF:
             for pdf in pdf_docs:
                 pdf_final.pages.extend(pdf.pages)
             
-            # Guardar el PDF combinado
-            pdf_final.save(ruta_destino)
+            # Guardar el PDF combinado en memoria en lugar de en disco
+            pdf_bytes = io.BytesIO()
+            pdf_final.save(pdf_bytes)
+            pdf_bytes.seek(0)  # Rebobinar al principio para leer después
+            resultado_bytes = pdf_bytes.read()
             
             # Cerrar todos los PDF abiertos para liberar memoria
             for pdf in pdf_docs:
@@ -580,13 +577,42 @@ class CombinadorPDF:
             # Verificar si hubo errores parciales
             if url_errors:
                 mensaje = f"{mensaje_base} (hubo {len(url_errors)} errores)"
-                return True, mensaje
+                return True, mensaje, resultado_bytes
             else:
-                return True, mensaje_base
+                return True, mensaje_base, resultado_bytes
                 
         except Exception as e:
-            return False, f"Error al combinar documentos: {str(e)}"
+            return False, f"Error al combinar documentos: {str(e)}", None
 
+    def combinar_pdfs(self, urls, ruta_destino):
+        """
+        Combina varios documentos descargados desde URLs en un solo archivo PDF
+        Convierte automáticamente las imágenes a PDF antes de combinarlas
+        Usa pikepdf para mejor rendimiento y menor consumo de memoria
+        
+        Args:
+            urls: Lista de URLs a descargar y combinar
+            ruta_destino: Ruta donde guardar el PDF combinado
+            
+        Returns:
+            Tupla (éxito, mensaje)
+        """
+        exito, mensaje, pdf_bytes = self.combinar_pdfs_a_memoria(urls)
+        
+        if not exito or not pdf_bytes:
+            return exito, mensaje
+            
+        try:
+            # Guardar el PDF combinado en disco
+            directorio = os.path.dirname(ruta_destino)
+            os.makedirs(directorio, exist_ok=True)
+            
+            with open(ruta_destino, 'wb') as f:
+                f.write(pdf_bytes)
+            
+            return True, mensaje
+        except Exception as e:
+            return False, f"Error al guardar el PDF: {str(e)}"
 
 def preparar_ruta_destino(directorio_base, nombre_archivo, prefijo=None):
     """
