@@ -113,7 +113,7 @@ filtered_data = st.session_state.viz_filtered_data
 # Sidebar con filtros globales y configuración
 with st.sidebar:    
     # Crear un expander para los filtros
-    with st.expander("Filtros de Visualización", expanded=False):
+    with st.expander("Filtros de Visualización", expanded=True):
         # Usar un contenedor en lugar de un form con borde visible
         # Crear un formulario para que solo se procesen los inputs cuando se hace clic en el botón
         with st.form(key="filtros_form", border=False):

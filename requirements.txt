@@ -21,3 +21,4 @@ langchain_community
 langchain_core
 psycopg2-binary
 streamlit_lottie
+pikepdf

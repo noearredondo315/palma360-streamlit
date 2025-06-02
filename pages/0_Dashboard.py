@@ -13,6 +13,7 @@ from utils.improved_data_loader import get_improved_data_loader, ImprovedDataLoa
 from utils.loading_dialog import loading_data_dialog # Import the refactored dialog
 from supabase import create_client, Client
 from collections import Counter
+from utils.google_cloud_utils import render_vm_control_button
 
 # Initialize Authentication
 authentication = Authentication()
@@ -217,7 +218,7 @@ with st.sidebar:
     # Contenedor de bienvenida con nombre de usuario y fecha
     st.markdown(f"""
     <div class="welcome-container">
-        <div style="color: #2C3E50; font-weight: 500;">{user_icon} <b>Bienvenido, {st.session_state.get('name', 'Usuario')}!</b></div>
+        <div style="color: #2C3E50; font-weight: 550;">{user_icon} <b>Bienvenido, {st.session_state.get('name', 'Usuario')}!</b></div>
         <div class="date-display" style="color: #34495E;">{calendar_icon} {fecha_actual}</div>
     </div>
     """, unsafe_allow_html=True)
@@ -230,6 +231,10 @@ with st.sidebar:
     if st.button("Recargar datos", use_container_width=True, type="primary"):
         start_threaded_data_load(clear_cache=True)
         # The st.rerun() inside start_threaded_data_load will handle UI update
+        
+    # Mostrar el control de VM solo para el usuario autorizado en la barra lateral
+    # El usuario 'l-gutierrez' es el valor predeterminado en la función is_authorized_for_vm_control
+    render_vm_control_button("l-gutierrez")
     
     # Divisor personalizado
     st.markdown('<hr class="custom-divider">', unsafe_allow_html=True)
@@ -382,71 +387,82 @@ Explore las siguientes secciones para aprovechar al máximo la plataforma:
         else:
             return str(date_value)
 
-    # Obtener los datos para las métricas
-    # Initialize metrics with default values
-    obras_count = 0
-    total_facturado_fmt = "$0.00"
-    ultima_actualizacion_fmt = "No disponible"
-    total_conceptos = 0
-    ultimo_registro = "No disponible"
-    top_concepto = "No disponible"
-    nombres = "No disponible"
-
-    # Inicializar cliente Supabase directamente con las variables ya obtenidas
-    try:
-        supabase = create_client(supabase_url, supabase_key)
+    @st.cache_data(ttl=3600)  # Cachear por 1 hora (3600 segundos)
+    def get_dashboard_metrics():
+        """Obtener métricas para el dashboard desde Supabase con caché"""
+        # Initialize metrics with default values
+        metrics = {
+            'obras_count': 0,
+            'total_facturado_fmt': "$0.00",
+            'ultima_actualizacion_fmt': "No disponible",
+            'total_conceptos': 0,
+            'ultimo_registro': "No disponible",
+            'top_concepto': "No disponible",
+            'nombres': "No disponible"
+        }
         
-        # 1. Cantidad de obras únicas
-        obras_response = supabase.table("portal_desglosado").select("obra").execute()
-        obras_count = obras_response.data
-        unique_obras = list({item["obra"] for item in obras_count if "obra" in item})
-        obras_count = len(unique_obras)
-
-        # 2. Total facturado
-        total_facturado_response = supabase.table("portal_desglosado").select("subtotal").execute()
-        total_facturado_data = total_facturado_response.data
-        total_facturado = sum(item.get('subtotal', 0) for item in total_facturado_data)
-        total_facturado_fmt = f"${total_facturado:,.2f}" if total_facturado else "$0.00"
-
-        # 3. Última actualización de datos (basado en la fecha más reciente de 'fecha_factura')
-        latest_date_response = supabase.table("portal_desglosado").select("fecha_factura").order("fecha_factura", desc=True).limit(1).maybe_single().execute()
-        latest_date_data = latest_date_response.data
-        if latest_date_data and latest_date_data.get("fecha_factura"):
-            ultima_actualizacion_fmt = format_date_to_spanish(pd.to_datetime(latest_date_data["fecha_factura"]))
-        else:
-            ultima_actualizacion_fmt = "No disponible"
-        
-        # 4. Total de conceptos únicos
-        total_conceptos = len(obras_response.data)  # Total number of rows returned
-
-        # 5. Último registro (concepto más reciente)
-        latest_date_response = supabase.table("portal_concentrado").select("fecha_consulta").order("fecha_consulta", desc=True).limit(1).maybe_single().execute()
-        latest_date_data = latest_date_response.data
-        if latest_date_data and latest_date_data.get("fecha_consulta"):
-            ultimo_registro = format_date_to_spanish(pd.to_datetime(latest_date_data["fecha_consulta"]))
-        else:
-            ultimo_registro = "No disponible"
-
-        # 6. Concepto más facturado (Top 1)
-        subcategoria_response = supabase.table("portal_desglosado").select("subcategoria").execute()
-        subcategoria_data = subcategoria_response.data
-
-        # Extract subcategoria values into a list
-        subcategorias = [item["subcategoria"] for item in subcategoria_data if item.get("subcategoria")]
-
-        # Count frequencies and get the top 2 most common
-        if subcategorias:
-            subcategoria_counts = Counter(subcategorias)
-            top_2_subcategorias = subcategoria_counts.most_common(2)
-            # Extraer los nombres de las subcategorías
-            nombres = [item[0] for item in top_2_subcategorias]
-            # Unir los nombres en una cadena con ' - '
-            nombres = ' - '.join(nombres)
-        else:
-            nombres = "No disponible"
-
-    except Exception as e:
-        st.error(f"Error al calcular métricas del dashboard desde Supabase: {e}")
+        # Inicializar cliente Supabase directamente con las variables ya obtenidas
+        try:
+            supabase = create_client(supabase_url, supabase_key)
+            
+            # 1. Cantidad de obras únicas
+            obras_response = supabase.table("portal_desglosado").select("obra").execute()
+            obras_data = obras_response.data
+            unique_obras = list({item["obra"] for item in obras_data if "obra" in item})
+            metrics['obras_count'] = len(unique_obras)
+            
+            # 2. Total facturado
+            total_facturado_response = supabase.table("portal_desglosado").select("subtotal").execute()
+            total_facturado_data = total_facturado_response.data
+            total_facturado = sum(item.get('subtotal', 0) for item in total_facturado_data)
+            metrics['total_facturado_fmt'] = f"${total_facturado:,.2f}" if total_facturado else "$0.00"
+            
+            # 3. Última actualización de datos (basado en la fecha más reciente de 'fecha_factura')
+            latest_date_response = supabase.table("portal_desglosado").select("fecha_factura").order("fecha_factura", desc=True).limit(1).maybe_single().execute()
+            latest_date_data = latest_date_response.data
+            if latest_date_data and latest_date_data.get("fecha_factura"):
+                metrics['ultima_actualizacion_fmt'] = format_date_to_spanish(pd.to_datetime(latest_date_data["fecha_factura"]))
+            
+            # 4. Total de conceptos únicos
+            metrics['total_conceptos'] = len(obras_response.data)  # Total number of rows returned
+            
+            # 5. Último registro (concepto más reciente)
+            latest_date_response = supabase.table("portal_concentrado").select("fecha_consulta").order("fecha_consulta", desc=True).limit(1).maybe_single().execute()
+            latest_date_data = latest_date_response.data
+            if latest_date_data and latest_date_data.get("fecha_consulta"):
+                metrics['ultimo_registro'] = format_date_to_spanish(pd.to_datetime(latest_date_data["fecha_consulta"]))
+            
+            # 6. Concepto más facturado (Top 1)
+            subcategoria_response = supabase.table("portal_desglosado").select("subcategoria").execute()
+            subcategoria_data = subcategoria_response.data
+            
+            # Extract subcategoria values into a list
+            subcategorias = [item["subcategoria"] for item in subcategoria_data if item.get("subcategoria")]
+            
+            # Count frequencies and get the top 2 most common
+            if subcategorias:
+                subcategoria_counts = Counter(subcategorias)
+                top_2_subcategorias = subcategoria_counts.most_common(2)
+                # Extraer los nombres de las subcategorías
+                nombres_list = [item[0] for item in top_2_subcategorias]
+                # Unir los nombres en una cadena con ' - '
+                metrics['nombres'] = ' - '.join(nombres_list)
+                
+        except Exception as e:
+            st.error(f"Error al calcular métricas del dashboard desde Supabase: {e}")
+            
+        return metrics
+    
+    # Obtener métricas cacheadas
+    dashboard_metrics = get_dashboard_metrics()
+    
+    # Extraer valores de las métricas
+    obras_count = dashboard_metrics['obras_count']
+    total_facturado_fmt = dashboard_metrics['total_facturado_fmt']
+    ultima_actualizacion_fmt = dashboard_metrics['ultima_actualizacion_fmt']
+    total_conceptos = dashboard_metrics['total_conceptos']
+    ultimo_registro = dashboard_metrics['ultimo_registro']
+    nombres = dashboard_metrics['nombres']
     
     # Primera fila de métricas
     col1, col2, col3 = st.columns(3)
@@ -493,6 +509,7 @@ Explore las siguientes secciones para aprovechar al máximo la plataforma:
         </div>
         """, unsafe_allow_html=True)
         
+    
     with col2:
         st.markdown(f"""
         <div class="simple-card">
@@ -510,9 +527,10 @@ Explore las siguientes secciones para aprovechar al máximo la plataforma:
             <div class="card-delta-positive">Fecha de captura</div>
         </div>
         """, unsafe_allow_html=True)
+    
+st.markdown("<br>", unsafe_allow_html=True)  # Espacio adicional
+    
 
-else:
-    # Fallback for any other unexpected state.
-    st.info("Cargando aplicación o esperando acción...")
-    time.sleep(0.1)
-    st.rerun()
+
+# La sección de control de VM se ha movido a la barra lateral
+

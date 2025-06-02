@@ -90,7 +90,7 @@ if st.session_state.sidebar_toast_message:
 # ''', unsafe_allow_html=True)
 
 # Formulario de filtros para consulta de facturas dentro de un expander
-with st.expander("🔍 Búsqueda", expanded=False):
+with st.expander("🔍 Búsqueda", expanded=True):
     # Importar datetime al principio, fuera de los bloques anidados
     import datetime
     today = datetime.date.today()
@@ -200,6 +200,17 @@ try:
         st.session_state.toast_icon = None
         st.session_state.sidebar_toast_message = None
         st.session_state.sidebar_toast_icon = None
+        
+        # Limpiar los filtros de segundo nivel pero conservar las columnas seleccionadas
+        explorers = ['desglosado_explorer', 'concentrado_explorer']
+        for explorer_id in explorers:
+            if explorer_id in st.session_state:
+                # Guardar las columnas seleccionadas (primer nivel)
+                selected_columns = st.session_state[explorer_id].get('_columns_to_filter_selection', [])
+                
+                # Crear un nuevo diccionario solo con las columnas seleccionadas
+                # Esto eliminará todos los filtros de segundo nivel
+                st.session_state[explorer_id] = {'_columns_to_filter_selection': selected_columns}
         # Convertir las obras seleccionadas a sus cuentas_gasto correspondientes
         # selected_cuentas_gasto = []
         # for obra in obras_seleccionadas:
@@ -296,15 +307,34 @@ if not data.empty or not data_contabilidad.empty:
 
     # Crear pestañas para visualización de datos
     tab1, tab2 = st.tabs(["Concentrado", "Desglosado"])
-    
+
     # Pestaña 1 - Vista Desglosada (original)
     with tab2:
-        # Usar custom_dataframe_explorer con los datos renombrados y configuración específica
-        multiselect_filter_cols = ["Obra", "Subcategoría", "Categoría", "Proveedor", "Residente", "Tipo Gasto"] # Define columns for multiselect
-        
-        # Añadir título en el sidebar para los filtros
-        st.sidebar.markdown("# Base de Datos ")
-        
+        # Definir explicitamente el tipo de cada columna para el filtrado
+
+        # Columnas para selección múltiple (categorías/enumeraciones)
+        multiselect_filter_cols = [
+            "Obra", "Subcategoría", "Categoría", "Proveedor", "Residente", "Tipo Gasto",
+            "Estatus", "Unidad", "Moneda", "Factura", "Orden de Compra", "Remisión", "Venta Tasa 0%", "Descuento"
+        ]
+
+        # Columnas de fecha para filtrado con calendario
+        fecha_columns = [
+            'Fecha Factura', 'Fecha Recepción', 'Fecha Pagado', 'Fecha Autorización'
+        ]
+
+        # Columnas numéricas para filtrado con slider
+        numeric_columns = [
+            "Subtotal", "Precio Unitario", "Total", "IVA 16%", 
+            "Retención IVA", "Retención ISR", "ISH", 'Venta Tasa 16%',
+            "Cantidad","Venta Tasa 0%", "Descuento"
+        ]
+
+        # Columnas de texto para búsqueda por patrones
+        text_columns = [
+            "Concepto", "Cuenta Gasto", "Clave Producto", "Clave Unidad", "UUID", "Descripción", "Serie", "sat"
+        ]
+
         # Manejar potenciales errores con el custom_dataframe_explorer
         try:
             # Si data está vacío, evitar ejecutar el explorer
@@ -312,11 +342,18 @@ if not data.empty or not data_contabilidad.empty:
                 # filtered_df_renamed is already display_data_renamed.copy() via pre-tab initialization
                 pass 
             else:
+                # Definir las columnas que no deben aparecer en las opciones de filtrado
+                excluded_columns = numeric_columns + ["Factura", "Orden de Compra", "Remisión", "Cuenta Gasto", "sat", "Serie"]
+                
                 filtered_df_renamed = custom_dataframe_explorer(
                     df=display_data_renamed, 
-                    explorer_id="desglosado_explorer", # Added explorer_id
+                    explorer_id="desglosado_explorer",
                     case=False, 
                     multiselect_columns=multiselect_filter_cols,
+                    fecha_columns=fecha_columns,
+                    numeric_columns=numeric_columns,
+                    text_columns=text_columns,
+                    excluded_filter_columns=excluded_columns,  # Excluir columnas especificadas
                     container=st.sidebar  # Mostrar los filtros en la barra lateral
                 )
         except Exception as e:

@@ -189,6 +189,12 @@ class Authentication:
         """Check if user is authenticated"""
         return st.session_state.get('authenticated', False)
     
+    def is_authorized_for_vm_control(self, authorized_username="l-gutierrez"):
+        """Verifica si el usuario actual está autorizado para controlar la VM"""
+        # Comprueba si el usuario está autenticado y tiene el username específico autorizado
+        return (st.session_state.get('authenticated', False) and 
+                st.session_state.get('username') == authorized_username)
+    
     def check_authentication(self):
         """Check authentication status and display appropriate message"""
         # Inicializar la variable si no existe
