@@ -909,9 +909,26 @@ if not data.empty or not data_contabilidad.empty:
         fecha_actual = time.strftime('%Y-%m-%d')
         # Verificar que base_downloads_dir exista en session_state
         if 'base_downloads_dir' not in st.session_state:
+            # Intentar determinar la carpeta de Descargas del usuario de manera más portátil
             home_dir = os.path.expanduser('~')
-            st.session_state.base_downloads_dir = os.path.join(home_dir, 'Downloads')
-        st.session_state.download_dir = os.path.join(st.session_state.base_downloads_dir, f'Facturas_StreamlPT_{fecha_actual}')  # Actualizado a 'combined' porque 'separate' ya no existe
+            # Comprobar rutas comunes de Descargas/Downloads en diferentes sistemas
+            download_candidates = [
+                os.path.join(home_dir, 'Downloads'),  # Inglés/Mac/Linux
+                os.path.join(home_dir, 'Descargas'),  # Español
+                os.path.join(home_dir, 'Desktop', 'Downloads'),  # Alternativa en escritorio
+                os.path.join(home_dir, 'Documents')  # Alternativa en documentos
+            ]
+            
+            # Usar la primera ruta que exista o crear la carpeta de Downloads en el directorio home
+            for path in download_candidates:
+                if os.path.exists(path) and os.path.isdir(path):
+                    st.session_state.base_downloads_dir = path
+                    break
+            else:
+                # Si ninguna ruta existe, usar el directorio home
+                st.session_state.base_downloads_dir = home_dir
+        
+        st.session_state.download_dir = os.path.join(st.session_state.base_downloads_dir, f'Facturas_StreamlPT_{fecha_actual}')
     
     # Preparar ruta base de la carpeta de descargas (pero no crearla aún)
     if 'base_downloads_dir' not in st.session_state:
@@ -979,8 +996,34 @@ if not data.empty or not data_contabilidad.empty:
                         help="'PDF por fila' combina los documentos de cada fila en un solo PDF. 'Un solo archivo' une todos los PDFs en un único archivo."
                     )
                     
-                    # Mostrar información breve y concisa sobre las opciones (actualizado)
-                    st.caption(f"📁 Destino: {st.session_state.download_dir}")
+                    # Mostrar información sobre el destino y ofrecer selección de carpeta
+                    
+                    # Simplificar la interfaz al máximo - solo mostrar la ruta actual y un campo para modificarla directamente
+                    # En vez de usar botones que puedan cerrar el diálogo, usamos un campo de texto directo
+                    folder_path = st.text_input(
+                        "📂 Seleccione la carpeta de destino:",
+                        value=st.session_state.download_dir,
+                        key="direct_folder_path",
+                        help="Introduzca una ruta absoluta donde desea guardar los PDFs"
+                    )
+                    
+                    # Si el usuario ha cambiado la ruta, validarla y actualizarla
+                    if folder_path != st.session_state.download_dir:
+                        try:
+                            # Validar que la ruta sea absoluta
+                            if not os.path.isabs(folder_path):
+                                folder_path = os.path.abspath(folder_path)
+                            
+                            # Intentar crear el directorio si no existe
+                            if not os.path.exists(folder_path):
+                                os.makedirs(folder_path, exist_ok=True)
+                            
+                            # Actualizar la ruta de descarga
+                            st.session_state.download_dir = folder_path
+                            st.success(f"✅ Carpeta de destino: {folder_path}")
+                        except Exception as e:
+                            st.error(f"❌ Error al establecer la ruta: {str(e)}")
+                    
                     
                     # Una sola línea informativa según el modo seleccionado
                     if st.session_state.download_mode == 'combined':
@@ -989,7 +1032,7 @@ if not data.empty or not data_contabilidad.empty:
                         st.info("🗞️ Se creará un único archivo PDF con todos los documentos")
                     
                     # Añadir sistema de ordenamiento personalizado
-                    st.subheader("Ordenamiento de datos", divider="rainbow")
+                    st.subheader("Orden de descarga", divider="rainbow")
                     
                     # Obtener todas las columnas del DataFrame para el multiselect
                     all_columns = selected_df.columns.tolist()
@@ -1019,10 +1062,17 @@ if not data.empty or not data_contabilidad.empty:
                     
                     # Botón para iniciar la descarga
                     if st.button("Iniciar descarga", key="start_download", type="primary"):
-                        # Actualizar la carpeta de destino para las descargas al iniciar la descarga
+                        # Crear una subcarpeta con la fecha dentro de la carpeta seleccionada por el usuario
                         fecha_actual = time.strftime('%Y-%m-%d')
-                        facturas_dir = os.path.join(st.session_state.base_downloads_dir, f'Facturas_StreamlPT_{fecha_actual}')
-                        st.session_state.download_dir = facturas_dir
+                        # Usar la carpeta que el usuario seleccionó en el campo de texto
+                        facturas_dir = os.path.join(st.session_state.download_dir, f'Facturas_{fecha_actual}')
+                        
+                        # Crear el directorio si no existe
+                        if not os.path.exists(facturas_dir):
+                            os.makedirs(facturas_dir, exist_ok=True)
+                        
+                        # Actualizar la ruta final (ahora es una subcarpeta de la seleccionada)
+                        download_path = facturas_dir
                         
                         # Aplicar el ordenamiento al dataframe según las selecciones del usuario
                         df_to_process = selected_df.copy()
@@ -1043,12 +1093,13 @@ if not data.empty or not data_contabilidad.empty:
                         
                         # Asegurar que la carpeta de destino exista y sea accesible
                         try:
-                            os.makedirs(st.session_state.download_dir, exist_ok=True)
+                            # Usamos la variable download_path que contiene la ruta con la fecha
+                            os.makedirs(download_path, exist_ok=True)
                         except Exception as e:
                             # En caso de error, intentar con el directorio de descargas
                             home_dir = os.path.expanduser('~')
-                            st.session_state.download_dir = os.path.join(home_dir, 'Downloads', 'Facturas_StreamlPT')
-                            os.makedirs(st.session_state.download_dir, exist_ok=True)
+                            download_path = os.path.join(home_dir, 'Downloads', f'Facturas_{fecha_actual}')
+                            os.makedirs(download_path, exist_ok=True)
                         
                         # Inicializar variable para control de cancelación
                         if 'download_cancelled' not in st.session_state:
@@ -1136,7 +1187,7 @@ if not data.empty or not data_contabilidad.empty:
                                     filename = f"{counter}_combinado_{time.strftime('%H%M%S')}_{idx}.pdf"
                             
                             # Ruta destino para el PDF combinado
-                            ruta_combinada = os.path.join(st.session_state.download_dir, filename)
+                            ruta_combinada = os.path.join(download_path, filename)
                             
                             # Combinar los PDFs
                             exito, mensaje = combinador.combinar_pdfs(urls, ruta_combinada)
@@ -1164,7 +1215,7 @@ if not data.empty or not data_contabilidad.empty:
                                 progress_text.write("Uniendo todos los PDFs en un solo archivo...")
                                 # Nombre para el archivo final
                                 timestamp = time.strftime('%Y%m%d_%H%M%S')
-                                ruta_final = os.path.join(st.session_state.download_dir, f"concentrado_{timestamp}.pdf")
+                                ruta_final = os.path.join(download_path, f"concentrado_{timestamp}.pdf")
                                 
                                 # Combinar todos los PDFs generados en uno solo
                                 from PyPDF2 import PdfMerger  # Importar aquí para asegurar que esté disponible
@@ -1223,7 +1274,8 @@ if not data.empty or not data_contabilidad.empty:
                                 
                                 # Mensaje de éxito para modo 'combined' (PDF por fila)
                                 st.success(f"✅ Proceso finalizado: {total_docs} PDFs generados de {counter} filas procesadas")
-                            
+                                st.caption(f"📁 Destino: {st.session_state.download_dir}")
+
                             # Mostrar errores solo si existen
                             errores = [res for res in combined_results if not res['exito']]
                             if errores:
