@@ -8,8 +8,8 @@ from utils.authentication import Authentication
 
 # Configure the page - debe ser el primer comando de Streamlit
 st.set_page_config(
-    page_title="StreamlPT Dashboard",
-    page_icon="streamlit",
+    page_title="Palma Terra 360",
+    page_icon="assets/logoPT360.png",
     layout="wide",
     initial_sidebar_state="expanded"
 )
