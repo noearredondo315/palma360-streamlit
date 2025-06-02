@@ -418,7 +418,7 @@ if prompt := st.chat_input("Haz una pregunta sobre las facturas referente a las 
     current_filters = {
         "obras_seleccionadas": obras_seleccionadas,
         "proveedores_seleccionados": proveedores_seleccionados,
-        "subcategorias_disponibles": subcategorias_disponibles
+        "subcategorias_disponibles": subcategorias_seleccionados
     }
     
     # Procesar la consulta con el agente (esto también actualiza st.session_state.messages)
