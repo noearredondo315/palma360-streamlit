@@ -242,14 +242,14 @@ try:
             "obra, tipo_gasto, cuenta_gasto, proveedor, residente, folio, estatus, "
             "fecha_factura, fecha_recepcion, fecha_pagada, fecha_autorizacion, clave_producto, clave_unidad, "
             "categoria_id, subcategoria, descripcion, cantidad, unidad, precio_unitario, subtotal, descuento, venta_tasa_0, venta_tasa_16, moneda, total_iva, "
-            "total_ish, retencion_iva, retencion_isr, total, serie, url_pdf, url_oc, url_rem, xml_uuid, sat"
+            "total_ish, retencion_isr, retencion_iva, total, serie, url_pdf, url_oc, url_rem, xml_uuid, sat"
         )
         
         # Definir columnas para portal_contabilidad
         contabilidad_columns = (
             "obra, tipo_gasto, cuenta_gasto, proveedor, residente, folio, estatus, "
             "fecha_factura, fecha_recepcion, fecha_pagada, fecha_autorizacion, subtotal, descuento, venta_tasa_0, venta_tasa_16, moneda, total_iva, "
-            "total_ish, retencion_iva, retencion_isr, total, serie, url_pdf, url_oc, url_rem, xml_uuid"
+            "total_ish, retencion_isr, retencion_iva, total, serie, url_pdf, url_oc, url_rem, xml_uuid, sat"
         )
 
         # Obtener datos para la tabla 'portal_desglosado'
@@ -1505,13 +1505,15 @@ if not data.empty or not data_contabilidad.empty:
                             fecha_cols = ['Fecha Factura', 'Fecha Recepción', 'Fecha Pagado', 'Fecha Autorización']
                             moneda_cols = ['Subtotal', 'Descuento', 'Venta Tasa 0%', 'Venta Tasa 16%', 'IVA 16%', 'ISH', 'Retención IVA', 'Retención ISR', 'Total']
                             numericas_cols = []
-                            texto_cols = ['Obra', 'Tipo Gasto', 'Cuenta Gasto', 'Proveedor', 'Residente', 'Folio', 'Estatus', 'Moneda', 'Serie', 'Factura', 'Orden de Compra', 'Remisión', 'UUID']
+                            contabilidad_cols = ['Folio', 'Cuenta Gasto']
+                            texto_cols = ['Obra', 'Tipo Gasto', 'Proveedor', 'Residente', 'Estatus', 'Moneda', 'Serie', 'Factura', 'Orden de Compra', 'Remisión', 'UUID']
                         else:
                             # Formato para datos desglosados
                             fecha_cols = ['Fecha Factura', 'Fecha Recepción', 'Fecha Pagado', 'Fecha Autorización']
                             numericas_cols = ['Cantidad']
                             moneda_cols = ['Precio Unitario', 'Subtotal', 'Descuento', 'Venta Tasa 0%', 'Venta Tasa 16%', 'Total IVA', 'Total ISH', 'Retención IVA', 'Retención ISR', 'Total', 'IVA 16%']
-                            texto_cols = ['Obra', 'Tipo Gasto', 'Cuenta Gasto', 'Proveedor', 'Residente', 'Folio', 'Estatus', 'Moneda', 'Serie', 'Factura', 'Orden de Compra', 'Remisión', 'UUID']
+                            contabilidad_cols = ['Folio', 'Cuenta Gasto']
+                            texto_cols = ['Obra', 'Tipo Gasto', 'Proveedor', 'Residente', 'Estatus', 'Moneda', 'Serie', 'Factura', 'Orden de Compra', 'Remisión', 'UUID']
                         
                         # Convertir columnas especiales manteniendo el tipo de dato correcto
                         for col in df_export.columns:
@@ -1527,6 +1529,16 @@ if not data.empty or not data_contabilidad.empty:
                                 try:
                                     # Asegurar que sea numérico
                                     df_export[col] = pd.to_numeric(df_export[col], errors='coerce')
+                                except Exception:
+                                    pass
+                            
+                            # Convertir columnas de contabilidad a enteros
+                            elif col in contabilidad_cols:
+                                try:
+                                    # Asegurar que sea entero
+                                    df_export[col] = pd.to_numeric(df_export[col], errors='coerce')
+                                    # Convertir a entero donde sea posible
+                                    df_export[col] = df_export[col].fillna(0).astype('Int64')  # Int64 permite NaN
                                 except Exception:
                                     pass
                         
@@ -1607,6 +1619,15 @@ if not data.empty or not data_contabilidad.empty:
                                         cell = ws.cell(row=row, column=col_idx)
                                         if cell.value is not None:
                                             cell.number_format = '#,##0.00'
+                                        # Aplicar bordes
+                                        cell.border = thin_border
+                                        
+                                # Formato contabilidad (números enteros sin separador de miles)
+                                elif col_name in contabilidad_cols:
+                                    for row in range(2, len(df_export) + 2):
+                                        cell = ws.cell(row=row, column=col_idx)
+                                        if cell.value is not None:
+                                            cell.number_format = '0'  # Formato para enteros sin separador
                                         # Aplicar bordes
                                         cell.border = thin_border
                                         
