@@ -249,7 +249,7 @@ try:
         contabilidad_columns = (
             "obra, tipo_gasto, cuenta_gasto, proveedor, residente, folio, estatus, "
             "fecha_factura, fecha_recepcion, fecha_pagada, fecha_autorizacion, subtotal, descuento, venta_tasa_0, venta_tasa_16, moneda, total_iva, "
-            "total_ish, retencion_isr, retencion_iva, total, serie, url_pdf, url_oc, url_rem, xml_uuid, sat"
+            "total_ish, retencion_isr, retencion_iva, total, serie, url_pdf, url_oc, url_rem, xml_uuid"
         )
 
         # Obtener datos para la tabla 'portal_desglosado'
@@ -266,10 +266,6 @@ try:
         )
         
         # Obtener datos para la tabla 'portal_contabilidad'
-        # Asumimos que portal_contabilidad tiene columnas similares o queremos todas (*)
-        # Si portal_contabilidad tiene diferentes nombres de columna para filtros (e.g. obra, proveedor), 
-        # get_filtered_data_multiselect might need adjustment or separate calls with mapped filters.
-        # For now, assume filters apply directly.
         data_contabilidad = get_filtered_data_multiselect(
             _client=supabase_client_chatbot,
             table_name="portal_contabilidad", 
@@ -281,7 +277,7 @@ try:
             estatus_seleccionados=estatus_seleccionados,
             fecha_seleccionada=fecha_seleccionada
         )
-        
+
         # Guardar en session_state para persistencia entre reruns
         st.session_state.saved_data = data
         st.session_state.saved_data_contabilidad = data_contabilidad
@@ -469,8 +465,8 @@ if not data.empty or not data_contabilidad.empty:
             # Provide context if no data is shown in tab2
             if filtered_df_renamed.empty or "UUID" not in filtered_df_renamed.columns:
                 st.info("No hay datos en la vista Desglosado para filtrar la vista Concentrado, o la columna 'UUID' falta en Desglosado.")
-            elif data_contabilidad.empty or "xml_uuid" not in data_contabilidad.columns:
-                st.info("No hay datos de contabilidad base para filtrar, o la columna 'xml_uuid' falta en Contabilidad.")
+            elif data_contabilidad.empty or "UUID" not in data_contabilidad.columns:
+                st.info("No hay datos de contabilidad base para filtrar, o la columna 'UUID' falta en Contabilidad.")
             else:
                 # This means UUIDs might have been found in tab1, and data_contabilidad exists, but no matches after filtering.
                 st.info("No hay datos de contabilidad que coincidan con los UUIDs de la vista Desglosado.")
