@@ -43,16 +43,16 @@ def get_navigation_structure():
     
     # Definir las páginas base (siempre disponibles)
     navigation_structure = {
-        "Dashboard": [
-            st.Page("pages/0_Dashboard.py", title="Dashboard"),
+        "Panel principal": [
+            st.Page("pages/0_Dashboard.py", title="Resumen"),
         ]
     }
     
     # Si los datos están cargados, agregar las herramientas
     if data_loaded:
         navigation_structure["Herramientas"] = [
-            st.Page("pages/1_SQL_Chatbot.py", title="Chat interactivo"),
-            st.Page("pages/3_Visualizacion_Datos.py", title="Visualización de datos"),
+            st.Page("pages/1_SQL_Chatbot.py", title="Chat Agent"),
+            st.Page("pages/3_Visualizacion_Datos.py", title="Visualización y reportes"),
             st.Page("pages/4_Base_Datos.py", title="Base de datos"),
         ]
     # Si no están cargados, la sección "Herramientas" simplemente no existirá en el diccionario

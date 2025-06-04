@@ -117,10 +117,11 @@ def custom_dataframe_explorer(df: pd.DataFrame, explorer_id: str, case: bool = T
         available_filter_columns = [col for col in df_filtered.columns if col not in excluded_filter_columns]
         
         to_filter_columns = st.multiselect(
-            "Filtrar dataframe en columnas:",
+            "Filtrar tabla de datos por columnas:",
             options=available_filter_columns,
             default=[col for col in valid_stored_columns if col not in excluded_filter_columns],
             key=widget_key_cols_filter,
+            placeholder="Selecciona columnas para filtrar",
             on_change=set_session_state_value, args=(cols_to_filter_state_key, widget_key_cols_filter)
         )
         # Persist initial or current state of the column selector immediately
@@ -228,7 +229,7 @@ def custom_dataframe_explorer(df: pd.DataFrame, explorer_id: str, case: bool = T
                     if clamped_default_dates[0] > clamped_default_dates[1]: clamped_default_dates = (min_date, max_date)
     
                     current_filter_values = right.date_input(
-                        f"Valores para {column}", value=clamped_default_dates, 
+                        f"Valores para {column}", value=clamped_default_dates, format="DD/MM/YYYY",
                         min_value=min_date, max_value=max_date, key=widget_key,
                         on_change=set_session_state_value, args=(filter_state_key, widget_key)
                     )
@@ -248,6 +249,7 @@ def custom_dataframe_explorer(df: pd.DataFrame, explorer_id: str, case: bool = T
                 current_filter_values = right.multiselect(
                     f"Valores para {column}",
                     options=unique_values,
+                    placeholder=f"Selecciona {column} para filtrar",
                     default=valid_selection,
                     key=widget_key,
                     on_change=set_session_state_value, args=(filter_state_key, widget_key)

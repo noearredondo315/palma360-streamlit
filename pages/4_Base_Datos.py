@@ -110,7 +110,7 @@ with st.expander("🔍 Búsqueda", expanded=True):
             obras_seleccionadas = st.multiselect(
                 "Obra:",
                 options=chatbot_filter_opts.get('obras', []),
-                placeholder="OBRA..."
+                placeholder="Seleccione una obra..."
             )
         
         with col2:
@@ -118,7 +118,7 @@ with st.expander("🔍 Búsqueda", expanded=True):
             proveedores_seleccionados = st.multiselect(
                 "Proveedor:",
                 options=chatbot_filter_opts.get('proveedores', []),
-                placeholder="Filtrar proveedor..."
+                placeholder="Filtrar por proveedor..."
             )
         
         with col3:
@@ -148,7 +148,22 @@ with st.expander("🔍 Búsqueda", expanded=True):
                 fecha_inicio = None
                 fecha_fin = None
 
+        estatus_date = st.columns([1, 1])
+        with estatus_date[0]:
+            estatus_seleccionados = st.segmented_control(
+                "Estatus:",
+                options=['Pagada', 'Proceso de Pago', 'RevisaRes'],
+                selection_mode="multi",
+            )
+        with estatus_date[1]:
+            fecha_seleccionada = st.segmented_control(
+                "Fecha:",
+                options=['Fecha Factura', 'Fecha Recepción', 'Fecha Pagado', 'Fecha Autorización'],
+                selection_mode="single",
+            )
         
+
+
         # Botones centrados en dos columnas
         col_buttons = st.columns([1, 1])
         
@@ -245,7 +260,9 @@ try:
             obras_seleccionadas=obras_seleccionadas,
             proveedores_seleccionados=proveedores_seleccionados,
             fecha_inicio=fecha_inicio,
-            fecha_fin=fecha_fin
+            fecha_fin=fecha_fin,
+            estatus_seleccionados=estatus_seleccionados,
+            fecha_seleccionada=fecha_seleccionada
         )
         
         # Obtener datos para la tabla 'portal_contabilidad'
@@ -260,7 +277,9 @@ try:
             obras_seleccionadas=obras_seleccionadas, 
             proveedores_seleccionados=proveedores_seleccionados,
             fecha_inicio=fecha_inicio,
-            fecha_fin=fecha_fin
+            fecha_fin=fecha_fin,
+            estatus_seleccionados=estatus_seleccionados,
+            fecha_seleccionada=fecha_seleccionada
         )
         
         # Guardar en session_state para persistencia entre reruns
@@ -305,7 +324,17 @@ if not data.empty or not data_contabilidad.empty:
     # Renombrar ANTES de pasar a dataframe_explorer
     display_data_renamed = data.copy()
     display_data_renamed.rename(columns=column_mapping, inplace=True, errors='ignore') # Ignorar si alguna columna del map no existe
-
+    
+    # Renombrar datos en session_state para uso posterior en dialogs
+    if not st.session_state.saved_data_contabilidad.empty:
+        st.session_state.saved_data_contabilidad.rename(columns=column_mapping, inplace=True, errors='ignore')
+    if not st.session_state.saved_data.empty:
+        st.session_state.saved_data.rename(columns=column_mapping, inplace=True, errors='ignore')
+        
+    # Guardar dataframes renombrados en session_state para facilitar acceso desde dialogs
+    st.session_state.df_desglosado = display_data_renamed.copy()
+    st.session_state.df_concentrado = st.session_state.saved_data_contabilidad.copy() if not st.session_state.saved_data_contabilidad.empty else pd.DataFrame()
+    
     # Initialize filtered_df_renamed before tabs, it will be updated by the explorer in tab1
     filtered_df_renamed = display_data_renamed.copy()
 
@@ -360,6 +389,8 @@ if not data.empty or not data_contabilidad.empty:
                     excluded_filter_columns=excluded_columns,  # Excluir columnas especificadas
                     container=st.sidebar  # Mostrar los filtros en la barra lateral
                 )
+                # Update the session state with filtered desglosado data
+                st.session_state.df_desglosado = filtered_df_renamed.copy()
         except Exception as e:
             st.sidebar.error(f"Error al aplicar filtros: {e}")
             # Fallback: filtered_df_renamed remains display_data_renamed.copy() (all data from initial load)
@@ -421,27 +452,30 @@ if not data.empty or not data_contabilidad.empty:
         # Ensure tab1's filtered data (filtered_df_renamed) is available and has the 'UUID' column
         # Also ensure base data_contabilidad (from main search) is available and has 'xml_uuid'
         if not filtered_df_renamed.empty and "UUID" in filtered_df_renamed.columns and \
-           not data_contabilidad.empty and "xml_uuid" in data_contabilidad.columns:
+           not data_contabilidad.empty and "UUID" in data_contabilidad.columns:
             
             unique_uuids_from_tab1 = filtered_df_renamed["UUID"].unique()
-            
+
             # Filter data_contabilidad based on the UUIDs present in tab1's filtered_df_renamed
-            data_contabilidad_for_tab2 = data_contabilidad[data_contabilidad['xml_uuid'].isin(unique_uuids_from_tab1)].copy()
+            data_contabilidad_for_tab2 = data_contabilidad[data_contabilidad['UUID'].isin(unique_uuids_from_tab1)].copy()
 
         # Now, use data_contabilidad_for_tab2 to prepare filtered_concentrado for display
         if not data_contabilidad_for_tab2.empty:
             filtered_concentrado = data_contabilidad_for_tab2 # It's already a copy and filtered by tab1's UUIDs
             filtered_concentrado.rename(columns=column_mapping, inplace=True, errors='ignore')
+            # Update the session state with this filtered concentrado
+            st.session_state.df_concentrado = filtered_concentrado.copy()
         else:
             # Provide context if no data is shown in tab2
             if filtered_df_renamed.empty or "UUID" not in filtered_df_renamed.columns:
                 st.info("No hay datos en la vista Desglosado para filtrar la vista Concentrado, o la columna 'UUID' falta en Desglosado.")
-            elif data_contabilidad.empty or "xml_uuid" not in data_contabilidad.columns:
-                st.info("No hay datos de contabilidad base para filtrar, o la columna 'xml_uuid' falta en Contabilidad.")
+            elif data_contabilidad.empty or "UUID" not in data_contabilidad.columns:
+                st.info("No hay datos de contabilidad base para filtrar, o la columna 'UUID' falta en Contabilidad.")
             else:
                 # This means UUIDs might have been found in tab1, and data_contabilidad exists, but no matches after filtering.
                 st.info("No hay datos de contabilidad que coincidan con los UUIDs de la vista Desglosado.")
             filtered_concentrado = pd.DataFrame() # Ensure it's an empty DataFrame
+            st.session_state.df_concentrado = filtered_concentrado.copy() # Ensure session state is updated with empty DataFrame
             
         # Crear diccionario de configuración de columnas para la vista concentrada
         concentrado_config_dict = {}
@@ -585,7 +619,7 @@ if not data.empty or not data_contabilidad.empty:
     # Botón para filtrar y guardar facturas con descuento > 0
     col1, col2 = st.sidebar.columns(2)
     
-    if col1.button("🔍 Facturas con descuento", key="filter_descuento"):
+    if col2.button("🔍 Facturas con descuento", key="filter_descuento"):
         try:
             # Variables para contar facturas encontradas
             num_facturas_concentrado = 0
@@ -651,7 +685,7 @@ if not data.empty or not data_contabilidad.empty:
             st.rerun()
     
     # Botón para filtrar y guardar facturas con retenciones (ISH, Retención IVA, Retención ISR)
-    if col2.button("🔍 Facturas con retenciones", key="filter_retenciones"):
+    if col1.button("🔍 Facturas con retenciones", key="filter_retenciones"):
         try:
             # Variables para contar facturas encontradas
             num_facturas_concentrado = 0
@@ -899,7 +933,7 @@ if not data.empty or not data_contabilidad.empty:
     
     # Separador para sección de descargas
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Descargas de PDFs")
+    st.sidebar.subheader("Descargas")
     
     # Inicializar variables en session_state para el dialogo de descargas
     if 'download_source' not in st.session_state:
@@ -945,28 +979,34 @@ if not data.empty or not data_contabilidad.empty:
         st.session_state.download_results = None
     
     # Definir la función de diálogo para descargas
-    @st.dialog("Configuración de descarga", width="large")
+    @st.dialog("💾 Descarga de archivos PDF", width="large")
     def configurar_descarga():
-        st.subheader("Configuración de descarga de PDFs")
+        # st.subheader("Configuración de descarga de PDFs")
         
         # Selección de fuente de datos
         st.session_state.download_source = st.radio(
             "Seleccione la fuente de datos:",
             options=[
-                'filtered_concentrado', 
-                'saved_selections'
+                'df_concentrado', 
+                'saved_selections',
+                'df_desglosado',
+                'saved_selections_desglosado'
             ],
             format_func=lambda x: {
-                'filtered_concentrado': "Facturas (Concentrado)", 
-                'saved_selections': "Selección temporal"
+                'df_concentrado': "Tabla Concentrado", 
+                'saved_selections': "Tabla Registro temporal (Concentrado)",
+                'saved_selections_desglosado': "Tabla Registro temporal (Desglosado)",
+                'df_desglosado': "Tabla Desglosado"
             }[x],
             index=0
         )
         
         # Mapeo de opciones a dataframes
         data_source_map = {
-            'filtered_concentrado': filtered_concentrado,
-            'saved_selections': st.session_state.saved_selections
+            'df_concentrado': st.session_state.df_concentrado,
+            'saved_selections': st.session_state.saved_selections,
+            'saved_selections_desglosado': st.session_state.saved_selections_desglosado,
+            'df_desglosado': st.session_state.df_desglosado
         }
         
         # Crear una copia del DataFrame para trabajar con él y aplicar ordenamiento
@@ -984,6 +1024,7 @@ if not data.empty or not data_contabilidad.empty:
                 st.session_state.download_columns = st.multiselect(
                     "Seleccione las columnas para descargar:",
                     options=available_url_columns,
+                    placeholder="Seleccione columnas para descargar",
                     default=available_url_columns[:1] if available_url_columns else []
                 )
                 
@@ -1000,19 +1041,19 @@ if not data.empty or not data_contabilidad.empty:
                         help="'PDF por fila' combina los documentos de cada fila en un solo PDF. 'Un solo archivo' une todos los PDFs en un único archivo."
                     )
                     
-                    # Mostrar información sobre el destino y método de descarga
-                    st.subheader("💾 Descarga de archivos", divider="gray")
+                    # # Mostrar información sobre el destino y método de descarga
+                    # st.subheader("💾 Descarga de archivos", divider="rainbow")
                     
-                    # Mantener la variable en session_state por compatibilidad
-                    if 'download_dir' not in st.session_state:
-                        st.session_state.download_dir = "browser_download"
+                    # # Mantener la variable en session_state por compatibilidad
+                    # if 'download_dir' not in st.session_state:
+                    #     st.session_state.download_dir = "browser_download"
                     
                     
-                    # Una sola línea informativa según el modo seleccionado
-                    if st.session_state.download_mode == 'combined':
-                        st.info("🗞️ Se creará un PDF por cada fila")
-                    elif st.session_state.download_mode == 'joined':
-                        st.info("🗞️ Se creará un único archivo PDF con todos los documentos")
+                    # # Una sola línea informativa según el modo seleccionado
+                    # if st.session_state.download_mode == 'combined':
+                    #     st.info("🗞️ Se creará un PDF por cada fila")
+                    # elif st.session_state.download_mode == 'joined':
+                    #     st.info("🗞️ Se creará un único archivo PDF con todos los documentos")
                     
                     # Añadir sistema de ordenamiento personalizado
                     st.subheader("Orden de descarga", divider="rainbow")
@@ -1024,13 +1065,14 @@ if not data.empty or not data_contabilidad.empty:
                     sort_columns = st.multiselect(
                         "Seleccione columnas para ordenar (en orden de prioridad):",
                         options=all_columns,
+                        placeholder="Elige el orden para la descarga (columnas)",
                         help="Las columnas se ordenarán en el orden en que las seleccione"
                     )
                     
                     # Si hay columnas seleccionadas, mostrar controles de dirección de ordenamiento
                     sort_directions = {}
                     if sort_columns:
-                        st.write("Seleccione la dirección de ordenamiento para cada columna:")
+                        # st.write("Seleccione la dirección de ordenamiento para cada columna:")
                         cols = st.columns(min(len(sort_columns), 3))  # Máximo 3 columnas por fila
                         
                         for i, column in enumerate(sort_columns):
@@ -1054,6 +1096,42 @@ if not data.empty or not data_contabilidad.empty:
                         
                         # Aplicar el ordenamiento al dataframe según las selecciones del usuario
                         df_to_process = selected_df.copy()
+                        
+                        # Verificar si estamos utilizando el dataframe desglosado y filtrar URLs únicas si es necesario
+                        if st.session_state.download_source == 'saved_selections_desglosado' or st.session_state.download_source == 'df_desglosado' and st.session_state.download_columns:
+                            st.info("Filtrando URLs únicas para evitar duplicados...")
+                            
+                            # Verificar qué columnas de URL están seleccionadas para descarga
+                            url_cols_to_process = [col for col in st.session_state.download_columns if col in URL_columns]
+                            
+                            if url_cols_to_process and not df_to_process.empty:
+                                # Crear un nuevo DataFrame para guardar filas con URLs únicas
+                                unique_df = pd.DataFrame(columns=df_to_process.columns)
+                                unique_urls = set()
+                                
+                                for _, row in df_to_process.iterrows():
+                                    row_urls = []
+                                    # Recopilar URLs de esta fila
+                                    for col in url_cols_to_process:
+                                        if pd.notna(row.get(col)) and row.get(col) and isinstance(row.get(col), str):
+                                            row_urls.append(row.get(col))
+                                    
+                                    # Verificar si ya tenemos estas URLs
+                                    new_url_found = False
+                                    for url in row_urls:
+                                        if url not in unique_urls:
+                                            unique_urls.add(url)
+                                            new_url_found = True
+                                    
+                                    # Si hay una URL nueva, guardar esta fila
+                                    if new_url_found:
+                                        unique_df = pd.concat([unique_df, pd.DataFrame([row])], ignore_index=True)
+                                
+                                # Reemplazar el DataFrame original con el filtrado
+                                filtered_count = len(df_to_process) - len(unique_df)
+                                df_to_process = unique_df
+                                if filtered_count > 0:
+                                    st.info(f"Se eliminaron {filtered_count} filas con URLs duplicadas")
                         
                         if sort_columns:
                             # Aplicar sort con las columnas y direcciones seleccionadas
@@ -1139,11 +1217,15 @@ if not data.empty or not data_contabilidad.empty:
                             progress_bar.progress(int(progress_percent))
                             progress_text.write(f"Procesando fila {counter} de {total_rows}...")
                             
-                            # Recopilar URLs a combinar para esta fila
+                            # Recopilar URLs a combinar para esta fila (solo URLs únicas)
                             urls = []
+                            urls_set = set()  # Para evitar duplicados dentro de una misma fila
                             for col in st.session_state.download_columns:
                                 if pd.notna(row.get(col)) and row.get(col) and isinstance(row.get(col), str):
-                                    urls.append(row.get(col))
+                                    url = row.get(col)
+                                    if url not in urls_set:  # Solo agregar si no está ya en la lista
+                                        urls_set.add(url)
+                                        urls.append(url)
                                 
                             if not urls:
                                 continue  # No hay URLs en esta fila, continuar con la siguiente
@@ -1355,13 +1437,251 @@ if not data.empty or not data_contabilidad.empty:
             else:
                 st.error("No se encontraron columnas con URLs en este dataframe")
         else:
-            st.error("El dataframe seleccionado está vacío. No hay datos para descargar.")
+            st.error("La tabla de datos está vacía. No hay datos para descargar.")
             if st.button("Cerrar", key="close_dialog_empty"):
                 st.rerun()
     
-    # Botón para abrir el diálogo de descargas
-    if st.sidebar.button("📥 Descargar PDFs", key="open_download_dialog"):
+    @st.dialog("💾 Descarga de archivos Excel", width="large")
+    def configurar_descarga_excel():
+        # Selección de fuente de datos
+        st.session_state.download_source_excel = st.radio(
+            "Seleccione la fuente de datos:",
+            options=[
+                'df_concentrado', 
+                'saved_selections',
+                'df_desglosado',
+                'saved_selections_desglosado'
+            ],
+            format_func=lambda x: {
+                'df_concentrado': "Tabla Concentrado", 
+                'saved_selections': "Tabla Registro temporal (Concentrado)",
+                'saved_selections_desglosado': "Tabla Registro temporal (Desglosado)",
+                'df_desglosado': "Tabla Desglosado"
+            }[x],
+            index=0
+        )
+        
+        # Mapeo de opciones a dataframes
+        data_source_map = {
+            'df_concentrado': st.session_state.df_concentrado,
+            'saved_selections': st.session_state.saved_selections,
+            'saved_selections_desglosado': st.session_state.saved_selections_desglosado,
+            'df_desglosado': st.session_state.df_desglosado
+        }
+        
+        # Verificar si el dataframe seleccionado tiene datos
+        selected_df = data_source_map[st.session_state.download_source_excel]
+        rows_count = len(selected_df) if not selected_df.empty else 0
+        
+        st.info(f"📊 Fuente seleccionada: {rows_count:,} registros disponibles")
+
+        if not selected_df.empty:
+            # Nombre del archivo
+            fecha_actual = time.strftime('%Y-%m-%d')
+            nombre_archivo = st.text_input(
+                "Nombre del archivo Excel",
+                value=f"Reporte_{fecha_actual}",
+                help="Nombre del archivo Excel para descarga"
+            )
+            
+            # Botón para descargar el Excel
+            if st.button("💾 Generar Excel", key="download_excel_button"):
+                try:
+                    with st.spinner("🔄 Procesando Excel..."):
+
+                        data_source_map_internal = {
+                            'df_concentrado': st.session_state.df_concentrado,
+                            'saved_selections': st.session_state.saved_selections,
+                            'saved_selections_desglosado': st.session_state.saved_selections_desglosado, 
+                            'df_desglosado': st.session_state.df_desglosado
+                        }
+                        
+                        # Crear una copia real para trabajar
+                        df_export = data_source_map_internal[st.session_state.download_source_excel].copy()
+                        
+                        # Identificar tipos de columnas según la selección
+                        if st.session_state.download_source_excel in ['df_concentrado', 'saved_selections']:
+                            # Formato para datos de contabilidad
+                            fecha_cols = ['Fecha Factura', 'Fecha Recepción', 'Fecha Pagado', 'Fecha Autorización']
+                            moneda_cols = ['Subtotal', 'Descuento', 'Venta Tasa 0%', 'Venta Tasa 16%', 'IVA 16%', 'ISH', 'Retención IVA', 'Retención ISR', 'Total']
+                            numericas_cols = []
+                            texto_cols = ['Obra', 'Tipo Gasto', 'Cuenta Gasto', 'Proveedor', 'Residente', 'Folio', 'Estatus', 'Moneda', 'Serie', 'Factura', 'Orden de Compra', 'Remisión', 'UUID']
+                        else:
+                            # Formato para datos desglosados
+                            fecha_cols = ['Fecha Factura', 'Fecha Recepción', 'Fecha Pagado', 'Fecha Autorización']
+                            numericas_cols = ['Cantidad']
+                            moneda_cols = ['Precio Unitario', 'Subtotal', 'Descuento', 'Venta Tasa 0%', 'Venta Tasa 16%', 'Total IVA', 'Total ISH', 'Retención IVA', 'Retención ISR', 'Total', 'IVA 16%']
+                            texto_cols = ['Obra', 'Tipo Gasto', 'Cuenta Gasto', 'Proveedor', 'Residente', 'Folio', 'Estatus', 'Moneda', 'Serie', 'Factura', 'Orden de Compra', 'Remisión', 'UUID']
+                        
+                        # Convertir columnas especiales manteniendo el tipo de dato correcto
+                        for col in df_export.columns:
+                            # Convertir fechas a datetime
+                            if col in fecha_cols:
+                                df_export[col] = pd.to_datetime(df_export[col], errors='coerce')
+                            
+                            # Convertir valores monetarios y numéricos a float
+                            elif col in moneda_cols or col in numericas_cols:
+                                try:
+                                    # Asegurar que sea numérico
+                                    df_export[col] = pd.to_numeric(df_export[col], errors='coerce')
+                                except Exception:
+                                    pass
+                        
+                        # Guardar en Excel manteniendo formatos
+                        output = io.BytesIO()
+                        
+                        try:
+                            # Importaciones necesarias de openpyxl
+                            from openpyxl.styles import numbers, Font, PatternFill, Border, Side, Alignment
+                            from openpyxl.utils.dataframe import dataframe_to_rows
+                            from openpyxl import Workbook
+                            
+                            # Crear un libro y hoja de trabajo
+                            wb = Workbook()
+                            ws = wb.active
+                            ws.title = "Datos"
+                            
+                            # Escribir encabezados
+                            headers = list(df_export.columns)
+                            ws.append(headers)
+                            
+                            # Definir estilos para encabezados
+                            header_font = Font(bold=True, color="FFFFFF")  # Texto en negrita color blanco
+                            header_fill = PatternFill(start_color="191970", end_color="191970", fill_type="solid")  # Fondo azul oscuro
+                            header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=False)
+                            
+                            # Definir bordes para todas las celdas
+                            thin_border = Border(
+                                left=Side(style='thin'), 
+                                right=Side(style='thin'), 
+                                top=Side(style='thin'), 
+                                bottom=Side(style='thin')
+                            )
+                            
+                            # Aplicar formato a los encabezados
+                            for col_idx, _ in enumerate(headers, start=1):
+                                cell = ws.cell(row=1, column=col_idx)
+                                cell.font = header_font
+                                cell.fill = header_fill
+                                cell.alignment = header_alignment
+                                cell.border = thin_border
+                            
+                            # Escribir datos fila por fila
+                            for _, row in df_export.iterrows():
+                                # Convertir la fila a lista
+                                row_to_write = []
+                                for col_name in headers:
+                                    cell_value = row[col_name]
+                                    row_to_write.append(cell_value)
+                                ws.append(row_to_write)
+                            
+                            # Aplicar formatos a las columnas
+                            for col_idx, col_name in enumerate(headers, start=1):
+                                # Convertir índice base 1 a letra de columna Excel (A, B, C...)
+                                col_letter = ws.cell(row=1, column=col_idx).column_letter
+                                
+                                # Formato de fechas
+                                if col_name in fecha_cols:
+                                    for row in range(2, len(df_export) + 2):  # +2 porque Excel empieza en 1 y hay una fila de encabezado
+                                        cell = ws.cell(row=row, column=col_idx)
+                                        if cell.value is not None and cell.value != '':
+                                            cell.number_format = 'DD/MM/YYYY'
+                                        # Aplicar bordes
+                                        cell.border = thin_border
+                                
+                                # Formato de moneda
+                                elif col_name in moneda_cols:
+                                    for row in range(2, len(df_export) + 2):
+                                        cell = ws.cell(row=row, column=col_idx)
+                                        if cell.value is not None:
+                                            cell.number_format = '$#,##0.00'
+                                        # Aplicar bordes
+                                        cell.border = thin_border
+                                
+                                # Formato numérico
+                                elif col_name in numericas_cols:
+                                    for row in range(2, len(df_export) + 2):
+                                        cell = ws.cell(row=row, column=col_idx)
+                                        if cell.value is not None:
+                                            cell.number_format = '#,##0.00'
+                                        # Aplicar bordes
+                                        cell.border = thin_border
+                                        
+                                # Aplicar solo bordes para las demás columnas
+                                else:
+                                    for row in range(2, len(df_export) + 2):
+                                        cell = ws.cell(row=row, column=col_idx)
+                                        cell.border = thin_border
+                            
+                            # Definir columnas que no deben ser ajustadas en ningún dataframe
+                            no_ajustar_general = ['Factura', 'Orden de Compra', 'Remisión', 'UUID', 'sat', 'Folio']
+                            
+                            # Si estamos en un dataframe desglosado, agregar 'Descripción' a la lista de exclusión
+                            no_ajustar = no_ajustar_general.copy()
+                            if st.session_state.download_source_excel in ['df_desglosado', 'saved_selections_desglosado']:
+                                no_ajustar.append('Descripción')
+                            
+                            # Ajustar ancho de columnas excepto las excluidas
+                            for col in ws.columns:
+                                max_length = 0
+                                column = col[0].column_letter  # Obtener letra de la columna
+                                column_name = ws.cell(row=1, column=col[0].column).value  # Nombre de la columna
+                                
+                                # Si la columna está en la lista de exclusión, usar ancho predeterminado
+                                if column_name in no_ajustar:
+                                    continue  # Saltar y dejar el ancho predeterminado
+                                
+                                # Para las demás columnas, ajustar al contenido
+                                for cell in col:
+                                    try:
+                                        if len(str(cell.value)) > max_length:
+                                            max_length = len(str(cell.value))
+                                    except:
+                                        pass
+                                adjusted_width = (max_length + 2)
+                                ws.column_dimensions[column].width = adjusted_width
+                            
+                            # Guardar a BytesIO
+                            wb.save(output)
+                            
+                        except Exception as e:
+                            st.error(f"Error generando Excel: {e}")
+                            # Mostrar primeras filas para diagnóstico
+                            if not df_clean.empty:
+                                st.write("Datos problematicos:")
+                                st.write(df_clean.head(1))
+                            raise e
+                        
+                        # Preparar el archivo para descarga
+                        output.seek(0)
+                        excel_data = output.getvalue()
+                        st.success(f"✅ Archivo Excel listo para descargar")
+                        # Generar el enlace de descarga
+                        st.download_button(
+                            label="📥 Haga clic para descargar",
+                            data=excel_data,
+                            file_name=f"{nombre_archivo}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    
+                    
+                except Exception as e:
+                    st.error(f"❌ Error al generar el archivo Excel: {e}")
+            
+            if st.button("Cerrar", key="close_excel_dialog"):
+                st.rerun()
+        else:
+            st.error("La tabla de datos está vacía. No hay datos para descargar.")
+            if st.button("Cerrar", key="close_excel_dialog_empty"):
+                st.rerun()
+
+    # Botones para abrir los diálogos de descargas
+    col_pdf, col_excel = st.sidebar.columns(2)
+    if col_pdf.button("📥 Descargar PDFs", key="open_download_dialog"):
         configurar_descarga()
+        
+    if col_excel.button("📊 Descargar Excel", key="open_excel_download_dialog"):
+        configurar_descarga_excel()
 
 
 
@@ -1374,6 +1694,8 @@ if not data.empty or not data_contabilidad.empty:
 ###
 #Aqui empezó el código nuevo
 ####
+
+
 
 elif not buscar_button:
     # Si es la carga inicial sin búsqueda activa, mostrar mensaje informativo

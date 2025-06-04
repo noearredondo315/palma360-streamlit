@@ -24,3 +24,4 @@ streamlit_lottie
 pikepdf
 google-api-python-client
 google-auth
+openpyxl

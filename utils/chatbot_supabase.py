@@ -115,7 +115,7 @@ def get_chatbot_filter_options(_client: Client):
 
 
 @st.cache_data(ttl=600, show_spinner=False)  # Cache for 10 minutes
-def get_filtered_data_multiselect(_client: Client, table_name: str, select_columns: str = "*", obras_seleccionadas=None, proveedores_seleccionados=None, fecha_inicio=None, fecha_fin=None, fecha_rango=None):
+def get_filtered_data_multiselect(_client: Client, table_name: str, select_columns: str = "*", obras_seleccionadas=None, proveedores_seleccionados=None, fecha_inicio=None, fecha_fin=None, fecha_rango=None, estatus_seleccionados=None, fecha_seleccionada=None):
     """Obtiene datos filtrados del portal desglosado basado en selecciones del usuario.
     
     Esta función permite obtener datos específicos basados en filtros aplicados por el usuario,
@@ -130,6 +130,8 @@ def get_filtered_data_multiselect(_client: Client, table_name: str, select_colum
         fecha_inicio: Fecha de inicio para filtrar (opcional)
         fecha_fin: Fecha de fin para filtrar (opcional)
         fecha_rango: Tupla con fecha de inicio y fin para filtrar (opcional, mantenido por compatibilidad)
+        estatus_seleccionados: Lista de estatus seleccionados (opcional, puede ser 'Pagada', 'Proceso de Pago', 'RevisaRes')
+        fecha_seleccionada: Tipo de fecha seleccionada (opcional, puede ser 'Fecha Factura', 'Fecha Recepción', 'Fecha Pagado', 'Fecha Autorización')
         
     Returns:
         DataFrame de pandas con los datos filtrados
@@ -142,7 +144,9 @@ def get_filtered_data_multiselect(_client: Client, table_name: str, select_colum
         print (
         "obras_seleccionadas: \n",obras_seleccionadas,
         "proveedores_seleccionados",proveedores_seleccionados,
-        "fecha_rango",fecha_rango)
+        "fecha_rango",fecha_rango,
+        "estatus_seleccionados",estatus_seleccionados,
+        "fecha_seleccionada",fecha_seleccionada)
 
         # Mapear obras a cuentas_gasto si es necesario
         cuentas_gasto = []
@@ -170,6 +174,10 @@ def get_filtered_data_multiselect(_client: Client, table_name: str, select_colum
         # Filtro para proveedor
         if proveedores_seleccionados:
             query = query.in_("proveedor", proveedores_seleccionados)
+            
+        # Filtro para estatus
+        if estatus_seleccionados:
+            query = query.in_("estatus", estatus_seleccionados)
                 # Filtro para el rango de fechas
         # Apply date range filter across all date columns
         # Primero verificamos si se pasaron fechas individuales
@@ -196,12 +204,29 @@ def get_filtered_data_multiselect(_client: Client, table_name: str, select_colum
             fecha_pagada_filter = f"and(fecha_pagada.gte.{fecha_inicio_str},fecha_pagada.lte.{fecha_fin_str})"
             fecha_autorizacion_filter = f"and(fecha_autorizacion.gte.{fecha_inicio_str},fecha_autorizacion.lte.{fecha_fin_str})"
             
-            # Construct a list of individual AND conditions for each date column
+            # Mapa para mapear la selección de fecha a la columna correspondiente
+            fecha_columna_map = {
+                'Fecha Factura': 'fecha_factura',
+                'Fecha Recepción': 'fecha_recepcion',
+                'Fecha Pagado': 'fecha_pagada',
+                'Fecha Autorización': 'fecha_autorizacion'
+            }
+            
+            # Construct a list of individual AND conditions
             date_conditions = []
-            date_conditions.append(f"and(fecha_factura.gte.{fecha_inicio_str},fecha_factura.lte.{fecha_fin_str})")
-            date_conditions.append(f"and(fecha_recepcion.gte.{fecha_inicio_str},fecha_recepcion.lte.{fecha_fin_str})")
-            date_conditions.append(f"and(fecha_pagada.gte.{fecha_inicio_str},fecha_pagada.lte.{fecha_fin_str})")
-            date_conditions.append(f"and(fecha_autorizacion.gte.{fecha_inicio_str},fecha_autorizacion.lte.{fecha_fin_str})")
+            
+            # Si se seleccionó un tipo específico de fecha, solo filtrar por esa columna
+            if fecha_seleccionada and fecha_seleccionada in fecha_columna_map:
+                columna = fecha_columna_map[fecha_seleccionada]
+                date_conditions.append(f"and({columna}.gte.{fecha_inicio_str},{columna}.lte.{fecha_fin_str})")
+                print(f"DEBUG - Filtrando por la columna de fecha: {columna}")
+            else:
+                # Si no se seleccionó ningún tipo específico, filtrar por todas las columnas de fecha (comportamiento actual)
+                date_conditions.append(f"and(fecha_factura.gte.{fecha_inicio_str},fecha_factura.lte.{fecha_fin_str})")
+                date_conditions.append(f"and(fecha_recepcion.gte.{fecha_inicio_str},fecha_recepcion.lte.{fecha_fin_str})")
+                date_conditions.append(f"and(fecha_pagada.gte.{fecha_inicio_str},fecha_pagada.lte.{fecha_fin_str})")
+                date_conditions.append(f"and(fecha_autorizacion.gte.{fecha_inicio_str},fecha_autorizacion.lte.{fecha_fin_str})")
+                print("DEBUG - Filtrando por todas las columnas de fecha")
             
             # Join these conditions with a comma for the OR filter
             final_date_filter_string = ",".join(date_conditions)
