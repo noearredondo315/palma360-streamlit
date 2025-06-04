@@ -469,8 +469,8 @@ if not data.empty or not data_contabilidad.empty:
             # Provide context if no data is shown in tab2
             if filtered_df_renamed.empty or "UUID" not in filtered_df_renamed.columns:
                 st.info("No hay datos en la vista Desglosado para filtrar la vista Concentrado, o la columna 'UUID' falta en Desglosado.")
-            elif data_contabilidad.empty or "UUID" not in data_contabilidad.columns:
-                st.info("No hay datos de contabilidad base para filtrar, o la columna 'UUID' falta en Contabilidad.")
+            elif data_contabilidad.empty or "xml_uuid" not in data_contabilidad.columns:
+                st.info("No hay datos de contabilidad base para filtrar, o la columna 'xml_uuid' falta en Contabilidad.")
             else:
                 # This means UUIDs might have been found in tab1, and data_contabilidad exists, but no matches after filtering.
                 st.info("No hay datos de contabilidad que coincidan con los UUIDs de la vista Desglosado.")
