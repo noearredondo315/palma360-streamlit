@@ -1517,7 +1517,10 @@ if not data.empty or not data_contabilidad.empty:
                         for col in df_export.columns:
                             # Convertir fechas a datetime
                             if col in fecha_cols:
+                                # Convertir a datetime sin zona horaria
                                 df_export[col] = pd.to_datetime(df_export[col], errors='coerce')
+                                # Eliminar la información de zona horaria para evitar error en Excel
+                                df_export[col] = df_export[col].dt.tz_localize(None) if df_export[col].dt.tz is not None else df_export[col]
                             
                             # Convertir valores monetarios y numéricos a float
                             elif col in moneda_cols or col in numericas_cols:
@@ -1646,10 +1649,7 @@ if not data.empty or not data_contabilidad.empty:
                             
                         except Exception as e:
                             st.error(f"Error generando Excel: {e}")
-                            # Mostrar primeras filas para diagnóstico
-                            if not df_clean.empty:
-                                st.write("Datos problematicos:")
-                                st.write(df_clean.head(1))
+                            # Mensaje de éxito (sin necesidad de mostrar datos de depuración)
                             raise e
                         
                         # Preparar el archivo para descarga
